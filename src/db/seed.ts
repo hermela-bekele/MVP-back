@@ -23,8 +23,18 @@ import {
 const PORTAL_USERS = [
   { id: 'usr-moe', email: 'moe.admin@prime.gov.et', password: 'moe123', role: 'moe', displayName: 'MOE Admin' },
   { id: 'usr-school', email: 'principal.semeneh@prime.edu.et', password: 'school123', role: 'school-head', displayName: 'School Head' },
+  { id: 'usr-registrar', email: 'registrar.office@prime.edu.et', password: 'registrar123', role: 'registrar', displayName: 'Tigist Haile' },
+  { id: 'usr-hr', email: 'hr.officer@prime.edu.et', password: 'hr123', role: 'hr', displayName: 'Sara Bekele' },
   { id: 'usr-curr', email: 'curriculum.lead@prime.edu.et', password: 'curr123', role: 'curriculum-head', displayName: 'Curriculum Head' },
-  { id: 'usr-dept', email: 'dept.head.math@prime.edu.et', password: 'dept123', role: 'department-head', displayName: 'Dept Head' },
+  {
+    id: 'usr-dept',
+    email: 'dept.head.math@prime.edu.et',
+    password: 'dept123',
+    role: 'department-head',
+    displayName: 'Ato Belayneh Kassahun',
+    subject: 'Mathematics',
+    departmentId: 'dept-math',
+  },
   { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa' },
   { id: 'usr-student', email: 'selam.abebe@std.edu.et', password: 'student123', role: 'student', displayName: 'Selam Abebe' },
   { id: 'usr-parent', email: 'abebe.demeke@gmail.com', password: 'parent123', role: 'parent', displayName: 'Abebe Demeke' },
@@ -141,8 +151,9 @@ async function seed() {
 
   for (const tm of mockTrainingMaterials) {
     await query(
-      `INSERT INTO training_materials (id, title, resource_url, category, training_type, uploaded_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [tm.id, tm.title, tm.resourceUrl, tm.category, tm.trainingType ?? null, tm.uploadedAt]
+      `INSERT INTO training_materials (id, title, resource_url, category, training_type, department_id, grade, subject, disseminated, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [tm.id, tm.title, tm.resourceUrl, tm.category, tm.trainingType ?? null, tm.departmentId ?? null, tm.grade ?? null, tm.subject ?? null, tm.disseminated ?? false, tm.uploadedAt]
     );
   }
 
@@ -193,8 +204,16 @@ async function seed() {
 
   for (const u of PORTAL_USERS) {
     await query(
-      `INSERT INTO portal_users (id, email, password, role, display_name) VALUES ($1,$2,$3,$4,$5)`,
-      [u.id, u.email.toLowerCase(), u.password, u.role, u.displayName]
+      `INSERT INTO portal_users (id, email, password, role, display_name, subject, department_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        u.id,
+        u.email.toLowerCase(),
+        u.password,
+        u.role,
+        u.displayName,
+        'subject' in u ? u.subject : null,
+        'departmentId' in u ? u.departmentId : null,
+      ]
     );
   }
 

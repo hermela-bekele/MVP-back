@@ -21,6 +21,7 @@ import {
   mapTrainingMaterial,
   mapSchoolCheckIn,
 } from '../lib/serialize.js';
+import { resourceUpload } from '../lib/uploads.js';
 
 const DEMO_TEACHER_ID = 'tch-1';
 
@@ -53,12 +54,64 @@ apiRouter.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'prime-api' });
 });
 
+apiRouter.post('/uploads', (req, res, next) => {
+  resourceUpload.single('file')(req, res, (err) => {
+    if (err) {
+      res.status(400).json({ error: err.message || 'Upload failed' });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+    const url = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    res.status(201).json({
+      url,
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      size: req.file.size,
+    });
+  });
+});
+
 apiRouter.get(
   '/bootstrap',
   asyncHandler(async (_req, res) => {
     res.json(await loadBootstrap());
   })
 );
+
+const PORTAL_ROLES = [
+  'moe',
+  'school-head',
+  'registrar',
+  'hr',
+  'curriculum-head',
+  'department-head',
+  'teacher',
+  'student',
+  'parent',
+] as const;
+
+const SELF_REGISTER_ROLES = PORTAL_ROLES;
+
+function mapPortalUser(user: {
+  id: string;
+  email: string;
+  role: string;
+  display_name: string;
+  subject?: string | null;
+  department_id?: string | null;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    displayName: user.display_name,
+    ...(user.subject ? { subject: user.subject } : {}),
+    ...(user.department_id ? { departmentId: user.department_id } : {}),
+  };
+}
 
 // Auth
 apiRouter.post(
@@ -77,13 +130,63 @@ apiRouter.post(
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
-    const user = rows[0];
-    res.json({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      displayName: user.display_name,
-    });
+    res.json(mapPortalUser(rows[0] as Parameters<typeof mapPortalUser>[0]));
+  })
+);
+
+apiRouter.post(
+  '/auth/register',
+  asyncHandler(async (req, res) => {
+    const { email, password, displayName, role } = req.body as {
+      email?: string;
+      password?: string;
+      displayName?: string;
+      role?: string;
+    };
+
+    if (!email || !password || !displayName || !role) {
+      res.status(400).json({ error: 'Email, password, display name, and role are required' });
+      return;
+    }
+
+    if (password.length < 6) {
+      res.status(400).json({ error: 'Password must be at least 6 characters' });
+      return;
+    }
+
+    if (!PORTAL_ROLES.includes(role as (typeof PORTAL_ROLES)[number])) {
+      res.status(400).json({ error: 'Invalid role' });
+      return;
+    }
+
+    if (!SELF_REGISTER_ROLES.includes(role as (typeof SELF_REGISTER_ROLES)[number])) {
+      res.status(403).json({
+        error: 'This role cannot be self-registered. Contact your school administrator.',
+      });
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const { rows: existing } = await query(
+      'SELECT id FROM portal_users WHERE LOWER(email) = $1',
+      [normalizedEmail]
+    );
+    if (existing.length > 0) {
+      res.status(409).json({ error: 'An account with this email already exists' });
+      return;
+    }
+
+    const { rows: countRows } = await query('SELECT COUNT(*)::int AS c FROM portal_users');
+    const id = `usr-${countRows[0].c + 1}`;
+
+    await query(
+      `INSERT INTO portal_users (id, email, password, role, display_name)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, normalizedEmail, password, role, displayName.trim()]
+    );
+
+    const { rows } = await query('SELECT * FROM portal_users WHERE id = $1', [id]);
+    res.status(201).json(mapPortalUser(rows[0] as Parameters<typeof mapPortalUser>[0]));
   })
 );
 
@@ -334,6 +437,25 @@ apiRouter.post(
 );
 
 apiRouter.patch(
+  '/assessments/:id',
+  asyncHandler(async (req, res) => {
+    const { questions } = req.body;
+    if (!Array.isArray(questions)) {
+      res.status(400).json({ error: 'questions array required' });
+      return;
+    }
+    await query(
+      `UPDATE assessments SET questions = $1,
+       status = CASE WHEN status = 'Rejected' THEN 'Pending Dept Head' ELSE status END
+       WHERE id = $2`,
+      [JSON.stringify(questions), req.params.id]
+    );
+    const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
+    res.json(mapAssessment(rows[0]));
+  })
+);
+
+apiRouter.patch(
   '/assessments/:id/approve',
   asyncHandler(async (req, res) => {
     const { comments } = req.body;
@@ -440,15 +562,29 @@ apiRouter.patch(
 apiRouter.post(
   '/training-materials',
   asyncHandler(async (req, res) => {
-    const { title, resourceUrl, category } = req.body;
+    const { title, resourceUrl, category, trainingType, departmentId, grade, subject } = req.body;
     const id = `tm-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
     await query(
-      `INSERT INTO training_materials (id, title, resource_url, category, uploaded_at) VALUES ($1,$2,$3,$4,$5)`,
-      [id, title, resourceUrl, category, today]
+      `INSERT INTO training_materials (id, title, resource_url, category, training_type, department_id, grade, subject, disseminated, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE,$9)`,
+      [id, title, resourceUrl, category, trainingType ?? null, departmentId ?? null, grade ?? null, subject ?? null, today]
     );
     const { rows } = await query('SELECT * FROM training_materials WHERE id = $1', [id]);
     res.status(201).json(mapTrainingMaterial(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/training-materials/:id/disseminate',
+  asyncHandler(async (req, res) => {
+    await query('UPDATE training_materials SET disseminated = TRUE WHERE id = $1', [req.params.id]);
+    const { rows } = await query('SELECT * FROM training_materials WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+    res.json(mapTrainingMaterial(rows[0]));
   })
 );
 
@@ -484,8 +620,8 @@ apiRouter.post(
     } else {
       await query(
         `INSERT INTO teaching_notes (id, teacher_id, lesson_plan_id, title, grade, subject, topic, language, content_summary, content_body, status, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Draft',$11,$11)`,
-        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, today]
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.status ?? 'Saved', today]
       );
     }
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [id]);
@@ -529,7 +665,7 @@ apiRouter.post(
   '/teaching-notes/:id/submit',
   asyncHandler(async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
-    await query(`UPDATE teaching_notes SET status = 'Pending Dept Head', updated_at = $1 WHERE id = $2`, [today, req.params.id]);
+    await query(`UPDATE teaching_notes SET status = 'Saved', updated_at = $1 WHERE id = $2`, [today, req.params.id]);
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [req.params.id]);
     res.json(mapTeachingNote(rows[0]));
   })

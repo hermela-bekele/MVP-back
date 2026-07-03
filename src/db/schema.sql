@@ -153,8 +153,17 @@ CREATE TABLE IF NOT EXISTS training_materials (
   resource_url TEXT NOT NULL,
   category TEXT NOT NULL,
   training_type TEXT,
+  department_id TEXT REFERENCES departments(id),
+  grade TEXT,
+  subject TEXT,
+  disseminated BOOLEAN NOT NULL DEFAULT FALSE,
   uploaded_at DATE NOT NULL
 );
+
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS department_id TEXT REFERENCES departments(id);
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS grade TEXT;
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS subject TEXT;
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS disseminated BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS teaching_notes (
   id TEXT PRIMARY KEY,
@@ -250,8 +259,13 @@ CREATE TABLE IF NOT EXISTS portal_users (
   email TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
   role TEXT NOT NULL,
-  display_name TEXT NOT NULL
+  display_name TEXT NOT NULL,
+  subject TEXT,
+  department_id TEXT REFERENCES departments(id)
 );
+
+ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS subject TEXT;
+ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS department_id TEXT REFERENCES departments(id);
 
 CREATE INDEX IF NOT EXISTS idx_students_school ON students(school_id);
 CREATE INDEX IF NOT EXISTS idx_lesson_plans_teacher ON lesson_plans(teacher_id);

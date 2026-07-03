@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { apiRouter } from './routes/api.js';
+import { uploadsDir } from './lib/uploads.js';
 
 const app = express();
 
@@ -13,6 +14,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: '2mb' }));
+app.use('/uploads', express.static(uploadsDir));
 
 app.use('/api', apiRouter);
 

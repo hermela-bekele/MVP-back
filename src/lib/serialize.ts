@@ -187,6 +187,10 @@ export function mapTrainingMaterial(row: Record<string, unknown>) {
     resourceUrl: row.resource_url,
     category: row.category,
     trainingType: row.training_type ?? undefined,
+    departmentId: row.department_id ?? undefined,
+    grade: row.grade ?? undefined,
+    subject: row.subject ?? undefined,
+    disseminated: Boolean(row.disseminated),
     uploadedAt: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
   };
 }
