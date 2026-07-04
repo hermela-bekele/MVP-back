@@ -12,19 +12,19 @@
     "db:setup": "npm run db:migrate && npm run db:seed"
   },
   "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^16.4.7",
-    "express": "^4.22.2",
-    "multer": "^2.2.0",
-    "pg": "^8.22.0"
-  },
-  "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.19.43",
     "@types/pg": "^8.20.0",
-    "tsx": "^4.19.2",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
+    "express": "^4.22.2",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
     "typescript": "^5"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
   }
 }

@@ -483,7 +483,7 @@ apiRouter.post(
       records: { studentId: string; status: string; remarks?: string }[];
     };
     const today = new Date().toISOString().split('T')[0];
-    const created = [];
+    const created: ReturnType<typeof mapAttendance>[] = [];
     for (const rec of records) {
       const { rows: std } = await query('SELECT * FROM students WHERE id = $1', [rec.studentId]);
       const student = std[0];
