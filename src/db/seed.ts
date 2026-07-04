@@ -35,7 +35,17 @@ const PORTAL_USERS = [
     subject: 'Mathematics',
     departmentId: 'dept-math',
   },
+  {
+    id: 'usr-dept-bio',
+    email: 'dept.head.bio@prime.edu.et',
+    password: 'dept123',
+    role: 'department-head',
+    displayName: 'Department Head — Biology',
+    subject: 'Biology',
+    departmentId: 'dept-bio',
+  },
   { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa' },
+  { id: 'usr-teacher-math', email: 'abebe.kebede@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Abebe Kebede' },
   { id: 'usr-student', email: 'selam.abebe@std.edu.et', password: 'student123', role: 'student', displayName: 'Selam Abebe' },
   { id: 'usr-parent', email: 'abebe.demeke@gmail.com', password: 'parent123', role: 'parent', displayName: 'Abebe Demeke' },
 ];
