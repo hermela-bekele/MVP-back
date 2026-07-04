@@ -29,7 +29,11 @@ async function start() {
     console.log('PostgreSQL connected.');
   } catch (err) {
     console.error('PostgreSQL connection failed:', err);
-    console.error('Run: npm run db:setup (from backend/) after creating database "Prime"');
+    console.error(
+      config.pg.connectionString
+        ? 'Check DATABASE_URL and run: npm run db:setup'
+        : 'Run: npm run db:setup (from backend/) after creating database "Prime"'
+    );
     process.exit(1);
   }
 

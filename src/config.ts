@@ -12,6 +12,9 @@ export const config = {
   port: parseInt(env('PORT', '3004'), 10),
   nodeEnv: env('NODE_ENV', 'development'),
   pg: {
+    connectionString: process.env.DATABASE_URL
+      ? env('DATABASE_URL')
+      : undefined,
     user: env('PG_USER_NAME', 'postgres'),
     password: env('PG_PASSWORD', 'password'),
     host: env('PG_HOST', 'localhost'),
