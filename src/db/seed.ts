@@ -18,7 +18,7 @@ import {
   mockTeacherFeedbacks,
   mockParentMessages,
   mockTeacherCheckInPrompts,
-} from '../../../src/lib/mockData.js';
+} from '../lib/mockData.js';
 
 const PORTAL_USERS = [
   { id: 'usr-moe', email: 'moe.admin@prime.gov.et', password: 'moe123', role: 'moe', displayName: 'MOE Admin' },
