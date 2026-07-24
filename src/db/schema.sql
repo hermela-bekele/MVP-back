@@ -82,8 +82,15 @@ CREATE TABLE IF NOT EXISTS lesson_plans (
   activities JSONB NOT NULL DEFAULT '[]',
   assessments JSONB NOT NULL DEFAULT '[]',
   homework TEXT NOT NULL DEFAULT '',
+  plan_type TEXT,
+  plan_detail TEXT,
+  created_by_role TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS plan_type TEXT;
+ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS plan_detail TEXT;
+ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS created_by_role TEXT;
 
 CREATE TABLE IF NOT EXISTS assessments (
   id TEXT PRIMARY KEY,
@@ -197,8 +204,11 @@ CREATE TABLE IF NOT EXISTS student_grade_entries (
   weight NUMERIC NOT NULL,
   term TEXT NOT NULL,
   recorded_at DATE NOT NULL,
-  remarks TEXT
+  remarks TEXT,
+  question_results JSONB
 );
+
+ALTER TABLE student_grade_entries ADD COLUMN IF NOT EXISTS question_results JSONB;
 
 CREATE TABLE IF NOT EXISTS teacher_resources (
   id TEXT PRIMARY KEY,
@@ -272,4 +282,23 @@ CREATE INDEX IF NOT EXISTS idx_lesson_plans_teacher ON lesson_plans(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_teacher ON assessments(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_grade_entries_student ON student_grade_entries(student_id);
 CREATE INDEX IF NOT EXISTS idx_grade_entries_teacher ON student_grade_entries(teacher_id);
+CREATE TABLE IF NOT EXISTS academic_calendars (
+  id TEXT PRIMARY KEY,
+  school_id TEXT REFERENCES schools(id),
+  academic_year TEXT NOT NULL,
+  title TEXT NOT NULL,
+  moe_reference TEXT,
+  quarters INTEGER NOT NULL,
+  quarter_break_weeks INTEGER NOT NULL,
+  semester_break_weeks INTEGER NOT NULL,
+  mid_exam_count INTEGER NOT NULL,
+  mid_exam_days INTEGER,
+  final_exam_weeks INTEGER,
+  events JSONB NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL CHECK (status IN ('Draft', 'Published')),
+  created_at DATE NOT NULL,
+  published_at DATE
+);
+
+CREATE INDEX IF NOT EXISTS idx_academic_calendars_school ON academic_calendars(school_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id);

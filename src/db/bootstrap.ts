@@ -13,6 +13,7 @@ import {
   mapExam,
   mapTrainingMaterial,
   mapTeachingNote,
+  mapAcademicCalendar,
   mapStudentGradeEntry,
   mapTeacherResource,
   mapTeacherFeedback,
@@ -42,6 +43,7 @@ export async function loadBootstrap() {
     parentMessages,
     teacherCheckInPrompts,
     notifications,
+    academicCalendars,
   ] = await Promise.all([
     query('SELECT * FROM schools ORDER BY name'),
     query('SELECT * FROM departments ORDER BY name'),
@@ -62,6 +64,7 @@ export async function loadBootstrap() {
     query('SELECT * FROM parent_messages ORDER BY sent_at DESC'),
     query('SELECT * FROM teacher_check_in_prompts ORDER BY due_date'),
     query('SELECT * FROM notifications ORDER BY created_at DESC'),
+    query('SELECT * FROM academic_calendars ORDER BY created_at DESC'),
   ]);
 
   return {
@@ -84,5 +87,6 @@ export async function loadBootstrap() {
     parentMessages: parentMessages.rows.map(mapParentMessage),
     teacherCheckInPrompts: teacherCheckInPrompts.rows.map(mapTeacherCheckInPrompt),
     notifications: notifications.rows.map(mapNotification),
+    academicCalendars: academicCalendars.rows.map(mapAcademicCalendar),
   };
 }

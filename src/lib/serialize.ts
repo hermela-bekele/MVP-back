@@ -93,6 +93,9 @@ export function mapLessonPlan(row: Record<string, unknown>) {
     activities: row.activities ?? [],
     assessments: row.assessments ?? [],
     homework: row.homework,
+    planType: (row.plan_type as string | null) ?? undefined,
+    planDetail: (row.plan_detail as string | null) ?? undefined,
+    createdByRole: (row.created_by_role as string | null) ?? undefined,
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString()
@@ -195,6 +198,34 @@ export function mapTrainingMaterial(row: Record<string, unknown>) {
   };
 }
 
+export function mapAcademicCalendar(row: Record<string, unknown>) {
+  const created = row.created_at;
+  const published = row.published_at;
+  const events = row.events;
+  return {
+    id: row.id,
+    schoolId: row.school_id,
+    academicYear: row.academic_year,
+    title: row.title,
+    moeReference: row.moe_reference ?? undefined,
+    quarters: Number(row.quarters),
+    quarterBreakWeeks: Number(row.quarter_break_weeks),
+    semesterBreakWeeks: Number(row.semester_break_weeks),
+    midExamCount: Number(row.mid_exam_count),
+    midExamDays: row.mid_exam_days != null ? Number(row.mid_exam_days) : undefined,
+    finalExamWeeks: row.final_exam_weeks != null ? Number(row.final_exam_weeks) : undefined,
+    events: Array.isArray(events) ? events : typeof events === 'string' ? JSON.parse(events) : [],
+    status: row.status,
+    createdAt:
+      created instanceof Date ? created.toISOString().split('T')[0] : String(created),
+    publishedAt: published
+      ? published instanceof Date
+        ? published.toISOString().split('T')[0]
+        : String(published)
+      : undefined,
+  };
+}
+
 export function mapTeachingNote(row: Record<string, unknown>) {
   const created = row.created_at;
   const updated = row.updated_at;
@@ -223,6 +254,14 @@ export function mapTeachingNote(row: Record<string, unknown>) {
 
 export function mapStudentGradeEntry(row: Record<string, unknown>) {
   const d = row.recorded_at;
+  let questionResults = row.question_results;
+  if (typeof questionResults === 'string') {
+    try {
+      questionResults = JSON.parse(questionResults);
+    } catch {
+      questionResults = undefined;
+    }
+  }
   return {
     id: row.id,
     studentId: row.student_id,
@@ -239,6 +278,7 @@ export function mapStudentGradeEntry(row: Record<string, unknown>) {
     term: row.term,
     recordedAt: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
     remarks: row.remarks ?? undefined,
+    questionResults: Array.isArray(questionResults) ? questionResults : undefined,
   };
 }
 
