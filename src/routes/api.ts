@@ -20,6 +20,7 @@ import {
   mapExam,
   mapTrainingMaterial,
   mapSchoolCheckIn,
+  mapAcademicCalendar,
 } from '../lib/serialize.js';
 import { resourceUpload } from '../lib/uploads.js';
 
@@ -360,10 +361,42 @@ apiRouter.post(
     const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
     const id = `lp-${Date.now()}`;
+    const status =
+      typeof b.status === 'string' && b.status.trim()
+        ? b.status
+        : 'Pending Dept Head';
+    const teacherName =
+      (typeof b.teacherName === 'string' && b.teacherName.trim()) ||
+      tch[0]?.name ||
+      'Teacher';
+    // Avoid FK failure when publisher is a dept-head without a teachers row
+    const resolvedTeacherId = tch.length ? teacherId : null;
+
     await query(
-      `INSERT INTO lesson_plans (id, subject, grade, title, sessions, teacher_id, teacher_name, status, version, objectives, activities, assessments, homework, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'Pending Dept Head',1,$8,$9,$10,$11,NOW())`,
-      [id, b.subject, b.grade, b.title, b.sessions, teacherId, tch[0]?.name ?? 'Teacher', JSON.stringify(b.objectives ?? []), JSON.stringify(b.activities ?? []), JSON.stringify(b.assessments ?? []), b.homework ?? '']
+      `INSERT INTO lesson_plans (
+         id, subject, grade, title, sessions, teacher_id, teacher_name, status, version,
+         objectives, activities, assessments, homework,
+         plan_type, plan_detail, created_by_role, created_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$12,$13,$14,$15,NOW()
+       )`,
+      [
+        id,
+        b.subject,
+        b.grade,
+        b.title,
+        b.sessions,
+        resolvedTeacherId,
+        teacherName,
+        status,
+        JSON.stringify(b.objectives ?? []),
+        JSON.stringify(b.activities ?? []),
+        JSON.stringify(b.assessments ?? []),
+        b.homework ?? '',
+        b.planType ?? null,
+        b.planDetail ?? null,
+        b.createdByRole ?? null,
+      ],
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [id]);
     res.status(201).json(mapLessonPlan(rows[0]));
@@ -603,6 +636,81 @@ apiRouter.post(
   })
 );
 
+// Academic calendars
+apiRouter.post(
+  '/academic-calendars',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const id = b.id ?? `cal-${Date.now()}`;
+    const today = new Date().toISOString().split('T')[0];
+    const schoolId = b.schoolId ?? 'sch-1';
+    const existing = await query('SELECT id FROM academic_calendars WHERE id = $1', [id]);
+    if (existing.rows.length) {
+      await query(
+        `UPDATE academic_calendars SET school_id=$1, academic_year=$2, title=$3, moe_reference=$4, quarters=$5,
+         quarter_break_weeks=$6, semester_break_weeks=$7, mid_exam_count=$8, mid_exam_days=$9, final_exam_weeks=$10,
+         events=$11, status=$12 WHERE id=$13`,
+        [
+          schoolId,
+          b.academicYear,
+          b.title,
+          b.moeReference ?? null,
+          b.quarters,
+          b.quarterBreakWeeks,
+          b.semesterBreakWeeks,
+          b.midExamCount,
+          b.midExamDays ?? null,
+          b.finalExamWeeks ?? null,
+          JSON.stringify(b.events ?? []),
+          b.status ?? 'Draft',
+          id,
+        ]
+      );
+    } else {
+      await query(
+        `INSERT INTO academic_calendars (id, school_id, academic_year, title, moe_reference, quarters, quarter_break_weeks,
+         semester_break_weeks, mid_exam_count, mid_exam_days, final_exam_weeks, events, status, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [
+          id,
+          schoolId,
+          b.academicYear,
+          b.title,
+          b.moeReference ?? null,
+          b.quarters,
+          b.quarterBreakWeeks,
+          b.semesterBreakWeeks,
+          b.midExamCount,
+          b.midExamDays ?? null,
+          b.finalExamWeeks ?? null,
+          JSON.stringify(b.events ?? []),
+          b.status ?? 'Draft',
+          today,
+        ]
+      );
+    }
+    const { rows } = await query('SELECT * FROM academic_calendars WHERE id = $1', [id]);
+    res.status(201).json(mapAcademicCalendar(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/academic-calendars/:id/publish',
+  asyncHandler(async (req, res) => {
+    const today = new Date().toISOString().split('T')[0];
+    await query(
+      `UPDATE academic_calendars SET status = 'Published', published_at = $1 WHERE id = $2`,
+      [today, req.params.id]
+    );
+    const { rows } = await query('SELECT * FROM academic_calendars WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Calendar not found' });
+      return;
+    }
+    res.json(mapAcademicCalendar(rows[0]));
+  })
+);
+
 // Teaching notes
 apiRouter.post(
   '/teaching-notes',
@@ -647,6 +755,7 @@ apiRouter.patch(
       contentBody: 'content_body',
       status: 'status',
       lessonPlanId: 'lesson_plan_id',
+      deptComments: 'dept_comments',
     };
     for (const [k, col] of Object.entries(fields)) {
       if (b[k] !== undefined) {
@@ -678,18 +787,54 @@ apiRouter.post(
     const b = req.body;
     const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
     const today = new Date().toISOString().split('T')[0];
+    const questionResultsJson =
+      b.questionResults != null ? JSON.stringify(b.questionResults) : null;
     let id = b.id;
     if (id) {
       await query(
-        `UPDATE student_grade_entries SET student_id=$1, subject=$2, grade_level=$3, section=$4, entry_type=$5, title=$6, score=$7, max_score=$8, weight=$9, term=$10, remarks=$11, recorded_at=$12, teacher_id=$13 WHERE id=$14`,
-        [b.studentId, b.subject, b.gradeLevel, b.section, b.entryType, b.title, b.score, b.maxScore, b.weight, b.term, b.remarks ?? null, today, teacherId, id]
+        `UPDATE student_grade_entries SET student_id=$1, subject=$2, grade_level=$3, section=$4, entry_type=$5, title=$6, assessment_id=$7, score=$8, max_score=$9, weight=$10, term=$11, remarks=$12, recorded_at=$13, teacher_id=$14, question_results=$15::jsonb WHERE id=$16`,
+        [
+          b.studentId,
+          b.subject,
+          b.gradeLevel,
+          b.section,
+          b.entryType,
+          b.title,
+          b.assessmentId ?? null,
+          b.score,
+          b.maxScore,
+          b.weight,
+          b.term,
+          b.remarks ?? null,
+          today,
+          teacherId,
+          questionResultsJson,
+          id,
+        ]
       );
     } else {
       id = `ge-${Date.now()}`;
       await query(
-        `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [id, b.studentId, teacherId, b.subject, b.gradeLevel, b.section, b.entryType, b.title, b.assessmentId ?? null, b.score, b.maxScore, b.weight, b.term, b.remarks ?? null, today]
+        `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks, question_results)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+        [
+          id,
+          b.studentId,
+          teacherId,
+          b.subject,
+          b.gradeLevel,
+          b.section,
+          b.entryType,
+          b.title,
+          b.assessmentId ?? null,
+          b.score,
+          b.maxScore,
+          b.weight,
+          b.term,
+          today,
+          b.remarks ?? null,
+          questionResultsJson,
+        ]
       );
     }
     const { rows } = await query('SELECT * FROM student_grade_entries WHERE id = $1', [id]);
