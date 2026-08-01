@@ -95,7 +95,7 @@ export interface LessonPlan {
 export interface Assessment {
   id: string;
   title: string;
-  type: 'Quiz' | 'Mid Exam' | 'Final Exam' | 'Assignment' | 'Practical';
+  type: 'Quiz' | 'Mid Exam' | 'Final Exam' | 'Assignment' | 'Practical' | 'Baseline';
   subject: string;
   grade: string;
   teacherId: string;

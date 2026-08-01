@@ -189,9 +189,26 @@ async function seed() {
 
   for (const ge of mockStudentGradeEntries) {
     await query(
-      `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [ge.id, ge.studentId, ge.teacherId, ge.subject, ge.gradeLevel, ge.section, ge.entryType, ge.title, ge.assessmentId ?? null, ge.score, ge.maxScore, ge.weight, ge.term, ge.recordedAt, ge.remarks ?? null]
+      `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks, question_results)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+      [
+        ge.id,
+        ge.studentId,
+        ge.teacherId,
+        ge.subject,
+        ge.gradeLevel,
+        ge.section,
+        ge.entryType,
+        ge.title,
+        ge.assessmentId ?? null,
+        ge.score,
+        ge.maxScore,
+        ge.weight,
+        ge.term,
+        ge.recordedAt,
+        ge.remarks ?? null,
+        ge.questionResults ? JSON.stringify(ge.questionResults) : null,
+      ]
     );
   }
 
