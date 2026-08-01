@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { query } from '../db/pool.js';
 import { loadBootstrap } from '../db/bootstrap.js';
 import {
@@ -22,10 +23,34 @@ import {
   mapSchoolCheckIn,
 } from '../lib/serialize.js';
 import { resourceUpload } from '../lib/uploads.js';
+import { admissionsRouter } from './admissions.js';
+import { billingRouter } from './billing.js';
+import { permissionsRouter } from './permissions.js';
+import { portalRouter } from './portal.js';
+import { communityRouter } from './community.js';
+import { attachPermissions } from '../middleware/auth.js';
+import { signAccessToken } from '../lib/tokens.js';
+import { writeAudit } from '../lib/audit.js';
+import { rateLimit } from '../lib/rateLimit.js';
+import { runBillingJobs } from '../services/jobs.js';
 
 const DEMO_TEACHER_ID = 'tch-1';
 
 export const apiRouter = Router();
+
+apiRouter.use('/admissions', admissionsRouter);
+apiRouter.use('/billing', billingRouter);
+apiRouter.use('/permissions', permissionsRouter);
+apiRouter.use('/portal', portalRouter);
+apiRouter.use(communityRouter);
+
+apiRouter.post('/jobs/billing', async (_req, res, next) => {
+  try {
+    res.json(await runBillingJobs());
+  } catch (err) {
+    next(err);
+  }
+});
 
 function asyncHandler(
   fn: (req: Request, res: Response) => Promise<void>
@@ -91,9 +116,10 @@ const PORTAL_ROLES = [
   'teacher',
   'student',
   'parent',
+  'finance',
 ] as const;
 
-const SELF_REGISTER_ROLES = PORTAL_ROLES;
+const SELF_REGISTER_ROLES = ['parent', 'student'] as const;
 
 function mapPortalUser(user: {
   id: string;
@@ -102,20 +128,36 @@ function mapPortalUser(user: {
   display_name: string;
   subject?: string | null;
   department_id?: string | null;
+  school_id?: string | null;
+  linked_student_id?: string | null;
+  linked_parent_id?: string | null;
+  permissions?: string[];
 }) {
   return {
     id: user.id,
     email: user.email,
     role: user.role,
     displayName: user.display_name,
+    schoolId: user.school_id ?? null,
+    linkedStudentId: user.linked_student_id ?? null,
+    linkedParentId: user.linked_parent_id ?? null,
+    permissions: user.permissions ?? [],
     ...(user.subject ? { subject: user.subject } : {}),
     ...(user.department_id ? { departmentId: user.department_id } : {}),
   };
 }
 
+async function verifyPassword(user: { password?: string; password_hash?: string | null }, password: string) {
+  if (user.password_hash) {
+    return bcrypt.compare(password, user.password_hash);
+  }
+  return user.password === password;
+}
+
 // Auth
 apiRouter.post(
   '/auth/login',
+  rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(async (req, res) => {
     const { email, password } = req.body as { email?: string; password?: string };
     if (!email || !password) {
@@ -123,14 +165,56 @@ apiRouter.post(
       return;
     }
     const { rows } = await query(
-      'SELECT * FROM portal_users WHERE LOWER(email) = LOWER($1) AND password = $2',
-      [email, password]
+      'SELECT * FROM portal_users WHERE LOWER(email) = LOWER($1)',
+      [email]
     );
     if (rows.length === 0) {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
-    res.json(mapPortalUser(rows[0] as Parameters<typeof mapPortalUser>[0]));
+    const user = rows[0];
+    if (!(await verifyPassword(user, password))) {
+      res.status(401).json({ error: 'Invalid credentials' });
+      return;
+    }
+    // Migrate plaintext seed passwords to hash on successful login
+    if (!user.password_hash && user.password) {
+      const hash = await bcrypt.hash(password, 10);
+      await query(
+        `UPDATE portal_users SET password_hash = $1, password = NULL WHERE id = $2`,
+        [hash, user.id]
+      );
+    }
+    const withPerms = await attachPermissions({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      displayName: user.display_name,
+      schoolId: user.school_id ?? null,
+      linkedStudentId: user.linked_student_id ?? null,
+      linkedParentId: user.linked_parent_id ?? null,
+      subject: user.subject ?? undefined,
+      departmentId: user.department_id ?? undefined,
+    });
+    const token = signAccessToken({
+      id: user.id,
+      role: user.role,
+      schoolId: user.school_id ?? null,
+    });
+    await writeAudit({
+      schoolId: user.school_id,
+      actorUserId: user.id,
+      action: 'auth.login',
+      entityType: 'portal_user',
+      entityId: user.id,
+    });
+    res.json({
+      ...mapPortalUser({
+        ...user,
+        permissions: withPerms.permissions,
+      } as Parameters<typeof mapPortalUser>[0]),
+      token,
+    });
   })
 );
 
@@ -178,15 +262,37 @@ apiRouter.post(
 
     const { rows: countRows } = await query('SELECT COUNT(*)::int AS c FROM portal_users');
     const id = `usr-${countRows[0].c + 1}`;
+    const passwordHash = await bcrypt.hash(password, 10);
+    const schoolId = (req.body as { schoolId?: string }).schoolId ?? null;
 
     await query(
-      `INSERT INTO portal_users (id, email, password, role, display_name)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, normalizedEmail, password, role, displayName.trim()]
+      `INSERT INTO portal_users (id, email, password, password_hash, role, display_name, school_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, normalizedEmail, '', passwordHash, role, displayName.trim(), schoolId]
     );
 
     const { rows } = await query('SELECT * FROM portal_users WHERE id = $1', [id]);
-    res.status(201).json(mapPortalUser(rows[0] as Parameters<typeof mapPortalUser>[0]));
+    const withPerms = await attachPermissions({
+      id: rows[0].id,
+      email: rows[0].email,
+      role: rows[0].role,
+      displayName: rows[0].display_name,
+      schoolId: rows[0].school_id ?? null,
+      linkedStudentId: rows[0].linked_student_id ?? null,
+      linkedParentId: rows[0].linked_parent_id ?? null,
+    });
+    const token = signAccessToken({
+      id: rows[0].id,
+      role: rows[0].role,
+      schoolId: rows[0].school_id ?? null,
+    });
+    res.status(201).json({
+      ...mapPortalUser({
+        ...(rows[0] as Parameters<typeof mapPortalUser>[0]),
+        permissions: withPerms.permissions,
+      }),
+      token,
+    });
   })
 );
 
@@ -321,6 +427,24 @@ apiRouter.patch(
   '/students/:id',
   asyncHandler(async (req, res) => {
     const b = req.body;
+    // Status changes with optional tuition proration go through transfers service
+    if (b.status !== undefined && Object.keys(b).every((k) => ['status', 'notes', 'applyProration'].includes(k))) {
+      const { changeStudentStatus } = await import('../services/transfers.js');
+      const result = await changeStudentStatus({
+        studentId: String(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id),
+        status: b.status,
+        notes: b.notes,
+        applyProration: b.applyProration,
+        actorUserId: (req as { user?: { id?: string } }).user?.id,
+      });
+      const { mapStudent } = await import('../lib/serialize.js');
+      res.json({
+        ...mapStudent(result.student),
+        prorationCredit: result.prorationCredit,
+        creditedInvoiceId: result.creditedInvoiceId,
+      });
+      return;
+    }
     const cols: [string, unknown][] = [];
     const fieldMap: Record<string, string> = {
       name: 'name',
@@ -689,7 +813,7 @@ apiRouter.post(
       await query(
         `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [id, b.studentId, teacherId, b.subject, b.gradeLevel, b.section, b.entryType, b.title, b.assessmentId ?? null, b.score, b.maxScore, b.weight, b.term, b.remarks ?? null, today]
+        [id, b.studentId, teacherId, b.subject, b.gradeLevel, b.section, b.entryType, b.title, b.assessmentId ?? null, b.score, b.maxScore, b.weight, b.term, today, b.remarks ?? null]
       );
     }
     const { rows } = await query('SELECT * FROM student_grade_entries WHERE id = $1', [id]);

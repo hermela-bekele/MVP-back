@@ -928,6 +928,7 @@ export interface StudentGradeEntry {
   term: string;
   recordedAt: string;
   remarks?: string;
+  published?: boolean;
 }
 
 export interface TeacherResource {

@@ -30,3 +30,10 @@ export const resourceUpload = multer({
     cb(new Error('File type not supported. Use PDF, Office docs, images, video, or ZIP.'));
   },
 });
+
+/** MVP stub — replace with ClamAV/cloud scanner in production. */
+export async function scanUpload(_filePath: string): Promise<'clean' | 'skipped' | 'infected'> {
+  if (process.env.VIRUS_SCAN_MODE === 'skip') return 'skipped';
+  // Dev default: mark clean after extension whitelist already passed.
+  return 'clean';
+}
