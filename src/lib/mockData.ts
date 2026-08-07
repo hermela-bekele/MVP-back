@@ -26,6 +26,8 @@ export interface Teacher {
   grades: string[];
   certification: string;
   trainingProgress: number; // percentage
+  yearsOfExperience: number;
+  experienceOverride?: 'new' | 'experienced' | null;
 }
 
 export interface Student {
@@ -227,13 +229,14 @@ export const mockTeachers: Teacher[] = [
     name: 'Martha Feyissa',
     email: 'martha.feyissa@prime.edu.et',
     phone: '+251-911-223344',
-    departmentId: 'dept-bio',
+    departmentId: 'dept-math',
     schoolId: 'sch-1',
     status: 'Active',
-    subjects: ['Biology', 'General Science'],
-    grades: ['Grade 9', 'Grade 10'],
+    subjects: ['Mathematics'],
+    grades: ['Grade 9', 'Grade 10', 'Grade 11'],
     certification: 'Professional Educator License A',
     trainingProgress: 85,
+    yearsOfExperience: 6,
   },
   {
     id: 'tch-2',
@@ -247,6 +250,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 9', 'Grade 10', 'Grade 11'],
     certification: 'Senior Math Educator Badge',
     trainingProgress: 100,
+    yearsOfExperience: 15,
   },
   {
     id: 'tch-3',
@@ -260,6 +264,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 11', 'Grade 12'],
     certification: 'National STEM Certificate',
     trainingProgress: 60,
+    yearsOfExperience: 1,
   },
   {
     id: 'tch-4',
@@ -273,6 +278,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 9', 'Grade 12'],
     certification: 'TEFL Ethiopia Professional',
     trainingProgress: 45,
+    yearsOfExperience: 3,
   },
   {
     id: 'tch-5',
@@ -286,6 +292,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 11', 'Grade 12'],
     certification: 'Regional Senior Biology Expert',
     trainingProgress: 90,
+    yearsOfExperience: 10,
   },
   {
     id: 'tch-6',
@@ -299,6 +306,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 10', 'Grade 11'],
     certification: 'Professional Educator License B',
     trainingProgress: 70,
+    yearsOfExperience: 1,
   },
   {
     id: 'tch-7',
@@ -312,6 +320,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 11', 'Grade 12'],
     certification: 'Advanced Pedagogy License',
     trainingProgress: 80,
+    yearsOfExperience: 9,
   },
   {
     id: 'tch-8',
@@ -325,6 +334,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 9', 'Grade 10', 'Grade 12'],
     certification: 'National STEM Badge',
     trainingProgress: 50,
+    yearsOfExperience: 1,
   },
   {
     id: 'tch-9',
@@ -338,6 +348,7 @@ export const mockTeachers: Teacher[] = [
     grades: ['Grade 9', 'Grade 10'],
     certification: 'Professional Educator License A',
     trainingProgress: 95,
+    yearsOfExperience: 7,
   },
 ];
 
@@ -560,7 +571,7 @@ export const mockLessonPlans: LessonPlan[] = [
     sessions: 5,
     teacherId: 'tch-1',
     teacherName: 'Martha Feyissa',
-    status: 'Pending School Head',
+    status: 'Approved',
     deptComments: 'Excellent structure. Added resources references. Recommended approval.',
     version: 2,
     objectives: [
@@ -719,7 +730,7 @@ export const mockAssessments: Assessment[] = [
     grade: 'Grade 10',
     teacherId: 'tch-2',
     teacherName: 'Abebe Kebede',
-    status: 'Pending Dept Head',
+    status: 'Approved',
     difficulty: 'Hard',
     questions: [
       { id: 1, question: 'What is the discriminant of the quadratic equation 3x^2 - 5x + 2 = 0?', type: 'Short Answer', answer: '1' },
@@ -736,7 +747,7 @@ export const mockAssessments: Assessment[] = [
     grade: 'Grade 11',
     teacherId: 'tch-8',
     teacherName: 'W/t Selamawit Hailu',
-    status: 'Pending Dept Head',
+    status: 'Approved',
     difficulty: 'Medium',
     questions: [
       { id: 1, question: 'State Newton’s second law of motion.', type: 'Short Answer', answer: 'F = ma' },
@@ -767,9 +778,8 @@ export const mockAssessments: Assessment[] = [
     grade: 'Grade 9',
     teacherId: 'tch-1',
     teacherName: 'Martha Feyissa',
-    status: 'Rejected',
+    status: 'Approved',
     difficulty: 'Easy',
-    comments: 'Revise difficulty balance — too many recall questions.',
     questions: [
       { id: 1, question: 'Name the control center of the cell.', type: 'Short Answer', answer: 'Nucleus' },
     ],

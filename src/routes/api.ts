@@ -22,6 +22,18 @@ import {
   mapTrainingMaterial,
   mapSchoolCheckIn,
   mapAcademicCalendar,
+  mapLessonDelivery,
+  mapCommunityPost,
+  mapCommunityReply,
+  mapStaffMessage,
+  mapCommunity,
+  mapCommunityMember,
+  mapCommunityChannel,
+  mapCommunityThread,
+  mapCommunityMessage,
+  mapMentionNotification,
+  mapTeacherSelfAssessment,
+  mapTeacherTrainingAssignment,
 } from '../lib/serialize.js';
 import { resourceUpload } from '../lib/uploads.js';
 import { admissionsRouter } from './admissions.js';
@@ -64,15 +76,117 @@ function asyncHandler(
 async function insertNotification(
   title: string,
   description: string,
-  type: string
+  type: string,
+  linkPath?: string | null
 ) {
   const id = `not-gen-${Date.now()}`;
   await query(
-    `INSERT INTO notifications (id, title, description, timestamp_label, read, type) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [id, title, description, 'Just now', false, type]
+    `INSERT INTO notifications (id, title, description, timestamp_label, read, type, link_path) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [id, title, description, 'Just now', false, type, linkPath ?? null]
   );
   const { rows } = await query('SELECT * FROM notifications WHERE id = $1', [id]);
   return mapNotification(rows[0]);
+}
+
+async function getRequestUser(
+  req: Request
+): Promise<{ id: string; displayName: string; role: string } | null> {
+  const userId = String(req.headers['x-user-id'] || '');
+  if (!userId) return null;
+  const { rows } = await query(
+    'SELECT id, display_name, role FROM portal_users WHERE id = $1',
+    [userId]
+  );
+  if (!rows.length) return null;
+  return {
+    id: rows[0].id as string,
+    displayName: rows[0].display_name as string,
+    role: rows[0].role as string,
+  };
+}
+
+async function requireCommunityMembership(
+  userId: string,
+  communityId: string,
+  res: Response
+): Promise<string | null> {
+  const { rows } = await query(
+    'SELECT role FROM community_members WHERE community_id = $1 AND user_id = $2',
+    [communityId, userId]
+  );
+  if (!rows.length) {
+    res.status(403).json({ error: 'Not a member of this community' });
+    return null;
+  }
+  return rows[0].role as string;
+}
+
+async function attachReactions(rows: Record<string, unknown>[], userId: string) {
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id as string);
+  const { rows: reactionRows } = await query(
+    `SELECT message_id, emoji, user_id FROM community_message_reactions WHERE message_id = ANY($1::text[])`,
+    [ids]
+  );
+  const byMessage = new Map<string, Map<string, { count: number; me: boolean }>>();
+  for (const r of reactionRows) {
+    const mid = r.message_id as string;
+    const emoji = r.emoji as string;
+    if (!byMessage.has(mid)) byMessage.set(mid, new Map());
+    const emojiMap = byMessage.get(mid)!;
+    const current = emojiMap.get(emoji) ?? { count: 0, me: false };
+    current.count += 1;
+    if (r.user_id === userId) current.me = true;
+    emojiMap.set(emoji, current);
+  }
+  return rows.map((row) => {
+    const emojiMap = byMessage.get(row.id as string);
+    const reactions = emojiMap
+      ? Array.from(emojiMap.entries()).map(([emoji, v]) => ({ emoji, count: v.count, me: v.me }))
+      : [];
+    return mapCommunityMessage(row, reactions);
+  });
+}
+
+/** Notify members whose display name is @mentioned in a channel/thread message. */
+async function createMentionNotifications(
+  messageId: string,
+  content: string,
+  communityId: string,
+  authorId: string
+) {
+  const names = Array.from(content.matchAll(/@([A-Za-z][\w .'-]*)/g)).map((m) => m[1].trim());
+  if (names.length === 0) return;
+  const { rows: members } = await query(
+    `SELECT pu.id, pu.display_name FROM community_members cm
+     JOIN portal_users pu ON pu.id = cm.user_id
+     WHERE cm.community_id = $1`,
+    [communityId]
+  );
+  const matchedIds = new Set<string>();
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    for (const m of members) {
+      const displayName = String(m.display_name).toLowerCase();
+      if ((displayName === lower || displayName.startsWith(lower)) && m.id !== authorId) {
+        matchedIds.add(m.id as string);
+      }
+    }
+  }
+  for (const uid of matchedIds) {
+    await query(
+      `INSERT INTO community_mention_notifications (id, user_id, message_id) VALUES ($1,$2,$3)`,
+      [`ment-${Date.now()}-${uid}`, uid, messageId]
+    );
+  }
+}
+
+/** Quizzes/baselines never need approval; HoD-authored exams are ready immediately. */
+function assessmentInitialStatus(type: string, createdByRole?: string): string {
+  const role = (createdByRole || 'teacher').toLowerCase();
+  if (role === 'department-head' || role === 'hod') return 'Approved';
+  if (type === 'Quiz' || type === 'Baseline') return 'Approved';
+  return 'Pending Dept Head';
 }
 
 // Health & bootstrap
@@ -339,9 +453,9 @@ apiRouter.post(
     const { rows: cnt } = await query('SELECT COUNT(*)::int AS c FROM teachers');
     const id = `tch-${Number(cnt[0].c) + 1}`;
     await query(
-      `INSERT INTO teachers (id, name, email, phone, department_id, school_id, status, subjects, grades, certification, training_progress)
-       VALUES ($1,$2,$3,$4,$5,$6,'Active',$7,$8,$9,0)`,
-      [id, b.name, b.email, b.phone, b.departmentId, b.schoolId, JSON.stringify(b.subjects ?? []), JSON.stringify(b.grades ?? []), b.certification ?? '']
+      `INSERT INTO teachers (id, name, email, phone, department_id, school_id, status, subjects, grades, certification, training_progress, years_experience)
+       VALUES ($1,$2,$3,$4,$5,$6,'Active',$7,$8,$9,0,$10)`,
+      [id, b.name, b.email, b.phone, b.departmentId, b.schoolId, JSON.stringify(b.subjects ?? []), JSON.stringify(b.grades ?? []), b.certification ?? '', Number(b.yearsOfExperience ?? 0)]
     );
     await query('UPDATE schools SET teachers_count = teachers_count + 1 WHERE id = $1', [b.schoolId]);
     const { rows } = await query('SELECT * FROM teachers WHERE id = $1', [id]);
@@ -365,12 +479,18 @@ apiRouter.patch(
       status: 'status',
       certification: 'certification',
       trainingProgress: 'training_progress',
+      yearsOfExperience: 'years_experience',
     };
     for (const [k, col] of Object.entries(map)) {
       if (b[k] !== undefined) {
         fields.push(`${col} = $${i++}`);
         vals.push(b[k]);
       }
+    }
+    // experienceOverride is nullable — 'new' | 'experienced' | null clears the manual override.
+    if ('experienceOverride' in b) {
+      fields.push(`experience_override = $${i++}`);
+      vals.push(b.experienceOverride ?? null);
     }
     if (b.subjects) {
       fields.push(`subjects = $${i++}`);
@@ -536,12 +656,17 @@ apiRouter.patch(
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    const lp = cur[0];
-    const isDept = role === 'dept';
-    const status = isDept ? 'Pending School Head' : 'Approved';
+    // Weekly lesson plans: department head is the final (and only) approver.
+    // School head does not approve weekly plans.
+    if (role === 'school') {
+      const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
+      res.json(mapLessonPlan(rows[0]));
+      return;
+    }
+    const status = 'Approved';
     await query(
-      `UPDATE lesson_plans SET status = $1, dept_comments = COALESCE($2, dept_comments), school_head_comments = COALESCE($3, school_head_comments), version = version + 1 WHERE id = $4`,
-      [status, isDept ? comments : null, !isDept ? comments : null, req.params.id]
+      `UPDATE lesson_plans SET status = $1, dept_comments = COALESCE($2, dept_comments), version = version + 1 WHERE id = $3`,
+      [status, comments ?? null, req.params.id]
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
     res.json(mapLessonPlan(rows[0]));
@@ -567,12 +692,124 @@ apiRouter.patch(
   asyncHandler(async (req, res) => {
     const { title, objectives, sessions, homework } = req.body;
     await query(
-      `UPDATE lesson_plans SET title = $1, objectives = $2, sessions = $3, homework = $4, status = 'Pending School Head', version = version + 1 WHERE id = $5`,
+      `UPDATE lesson_plans SET title = $1, objectives = $2, sessions = $3, homework = $4, status = 'Pending Dept Head', version = version + 1 WHERE id = $5`,
       [title, JSON.stringify(objectives), sessions, homework, req.params.id]
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
     res.json(mapLessonPlan(rows[0]));
   })
+);
+
+apiRouter.patch(
+  '/lesson-plans/:id/annual',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const { rows: cur } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
+    if (!cur[0]) {
+      res.status(404).json({ error: 'Lesson plan not found' });
+      return;
+    }
+    await query(
+      `UPDATE lesson_plans SET
+        title = $1, grade = $2, subject = $3, sessions = $4,
+        objectives = $5, activities = $6, assessments = $7, homework = $8,
+        plan_detail = $9, status = 'Approved', version = version + 1
+       WHERE id = $10`,
+      [
+        b.title,
+        b.grade,
+        b.subject,
+        b.sessions,
+        JSON.stringify(b.objectives ?? []),
+        JSON.stringify(b.activities ?? []),
+        JSON.stringify(b.assessments ?? []),
+        b.homework ?? '',
+        b.planDetail ?? null,
+        req.params.id,
+      ],
+    );
+    const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
+    res.json(mapLessonPlan(rows[0]));
+  }),
+);
+
+apiRouter.patch(
+  '/lesson-plans/:id/meta',
+  asyncHandler(async (req, res) => {
+    const b = req.body as Record<string, unknown>;
+    const fields: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (b.planType !== undefined) {
+      fields.push(`plan_type = $${i++}`);
+      vals.push(b.planType);
+    }
+    if (b.createdByRole !== undefined) {
+      fields.push(`created_by_role = $${i++}`);
+      vals.push(b.createdByRole);
+    }
+    if (b.subject !== undefined) {
+      fields.push(`subject = $${i++}`);
+      vals.push(b.subject);
+    }
+    if (b.grade !== undefined) {
+      fields.push(`grade = $${i++}`);
+      vals.push(b.grade);
+    }
+    if (b.title !== undefined) {
+      fields.push(`title = $${i++}`);
+      vals.push(b.title);
+    }
+    if (b.status !== undefined) {
+      fields.push(`status = $${i++}`);
+      vals.push(b.status);
+    }
+    if (!fields.length) {
+      res.status(400).json({ error: 'No fields to update' });
+      return;
+    }
+    vals.push(req.params.id);
+    await query(`UPDATE lesson_plans SET ${fields.join(', ')} WHERE id = $${i}`, vals);
+    const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
+    res.json(mapLessonPlan(rows[0]));
+  }),
+);
+
+apiRouter.delete(
+  '/lesson-plans/:id',
+  asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT id FROM lesson_plans WHERE id = $1', [req.params.id]);
+    if (!cur[0]) {
+      res.status(404).json({ error: 'Lesson plan not found' });
+      return;
+    }
+    const { rows: notes } = await query(
+      'SELECT id FROM teaching_notes WHERE lesson_plan_id = $1',
+      [req.params.id],
+    );
+    for (const n of notes) {
+      await query('UPDATE community_posts SET teaching_note_id = NULL WHERE teaching_note_id = $1', [
+        n.id,
+      ]);
+      try {
+        await query('UPDATE lesson_deliveries SET teaching_note_id = NULL WHERE teaching_note_id = $1', [
+          n.id,
+        ]);
+      } catch {
+        /* optional */
+      }
+    }
+    try {
+      await query('UPDATE lesson_deliveries SET lesson_plan_id = NULL WHERE lesson_plan_id = $1', [
+        req.params.id,
+      ]);
+    } catch {
+      /* optional column */
+    }
+    await query('DELETE FROM teaching_notes WHERE lesson_plan_id = $1', [req.params.id]);
+    await query('DELETE FROM lesson_plans WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+  }),
 );
 
 // Assessments
@@ -581,13 +818,47 @@ apiRouter.post(
   asyncHandler(async (req, res) => {
     const b = req.body;
     const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
+    const createdByRole = String(b.createdByRole ?? 'teacher');
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
+    const authorName =
+      b.teacherName ||
+      (createdByRole === 'department-head' ? b.authorName : null) ||
+      tch[0]?.name ||
+      'Teacher';
+    const status = assessmentInitialStatus(String(b.type), createdByRole);
     const id = `asm-${Date.now()}`;
     await query(
-      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'Pending Dept Head',$8,$9,NOW())`,
-      [id, b.title, b.type, b.subject, b.grade, teacherId, tch[0]?.name ?? 'Teacher', b.difficulty, JSON.stringify(b.questions ?? [])]
+      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_by_role, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+      [
+        id,
+        b.title,
+        b.type,
+        b.subject,
+        b.grade,
+        teacherId,
+        authorName,
+        status,
+        b.difficulty,
+        JSON.stringify(b.questions ?? []),
+        createdByRole,
+      ]
     );
+    if (status === 'Approved') {
+      await insertNotification(
+        'Assessment ready',
+        `"${b.title}" is ready to link in the gradebook.`,
+        'success',
+        '/dashboard/teacher/manage-students'
+      );
+    } else {
+      await insertNotification(
+        'Assessment awaiting approval',
+        `"${b.title}" was submitted for department head review.`,
+        'request',
+        '/dashboard/department-head/assessments'
+      );
+    }
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [id]);
     res.status(201).json(mapAssessment(rows[0]));
   })
@@ -630,6 +901,19 @@ apiRouter.patch(
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
     res.json(mapAssessment(rows[0]));
   })
+);
+
+apiRouter.delete(
+  '/assessments/:id',
+  asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT id FROM assessments WHERE id = $1', [req.params.id]);
+    if (!cur[0]) {
+      res.status(404).json({ error: 'Assessment not found' });
+      return;
+    }
+    await query('DELETE FROM assessments WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+  }),
 );
 
 // Attendance batch
@@ -757,6 +1041,52 @@ apiRouter.post(
     );
     const { rows } = await query('SELECT * FROM school_check_ins WHERE id = $1', [id]);
     res.status(201).json(mapSchoolCheckIn(rows[0]));
+  })
+);
+
+// STEP self-assessment: a teacher submits (or resubmits) their rubric self-rating.
+apiRouter.post(
+  '/teacher-self-assessments',
+  asyncHandler(async (req, res) => {
+    const { teacherId, responses, overallScore, weakestCompetencyId } = req.body;
+    const id = `sa-${Date.now()}`;
+    await query(
+      `INSERT INTO teacher_self_assessments (id, teacher_id, responses, overall_score, weakest_competency_id)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [id, teacherId, JSON.stringify(responses ?? []), overallScore ?? 0, weakestCompetencyId ?? null]
+    );
+    const { rows } = await query('SELECT * FROM teacher_self_assessments WHERE id = $1', [id]);
+    res.status(201).json(mapTeacherSelfAssessment(rows[0]));
+  })
+);
+
+// HoD/School Head assigns a TIP/STEP/ELEP module to a specific teacher or leader.
+apiRouter.post(
+  '/teacher-training-assignments',
+  asyncHandler(async (req, res) => {
+    const { teacherId, program, moduleId, moduleTitle, assignedByName, reason } = req.body;
+    const id = `assign-${Date.now()}`;
+    await query(
+      `INSERT INTO teacher_training_assignments (id, teacher_id, program, module_id, module_title, assigned_by_name, reason)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, teacherId, program, moduleId, moduleTitle, assignedByName, reason ?? null]
+    );
+    const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [id]);
+    res.status(201).json(mapTeacherTrainingAssignment(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/teacher-training-assignments/:id',
+  asyncHandler(async (req, res) => {
+    const { status } = req.body;
+    await query('UPDATE teacher_training_assignments SET status = $1 WHERE id = $2', [status, req.params.id]);
+    const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Assignment not found' });
+      return;
+    }
+    res.json(mapTeacherTrainingAssignment(rows[0]));
   })
 );
 
@@ -902,6 +1232,29 @@ apiRouter.post(
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [req.params.id]);
     res.json(mapTeachingNote(rows[0]));
   })
+);
+
+apiRouter.delete(
+  '/teaching-notes/:id',
+  asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT id FROM teaching_notes WHERE id = $1', [req.params.id]);
+    if (!cur[0]) {
+      res.status(404).json({ error: 'Teaching note not found' });
+      return;
+    }
+    await query('UPDATE community_posts SET teaching_note_id = NULL WHERE teaching_note_id = $1', [
+      req.params.id,
+    ]);
+    try {
+      await query('UPDATE lesson_deliveries SET teaching_note_id = NULL WHERE teaching_note_id = $1', [
+        req.params.id,
+      ]);
+    } catch {
+      /* column may not exist in older schemas */
+    }
+    await query('DELETE FROM teaching_notes WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+  }),
 );
 
 // Grade entries
@@ -1083,8 +1436,8 @@ apiRouter.patch(
 apiRouter.post(
   '/notifications',
   asyncHandler(async (req, res) => {
-    const { title, description, type } = req.body;
-    const notif = await insertNotification(title, description, type);
+    const { title, description, type, linkPath } = req.body;
+    const notif = await insertNotification(title, description, type, linkPath);
     res.status(201).json(notif);
   })
 );
@@ -1103,5 +1456,1031 @@ apiRouter.delete(
   asyncHandler(async (_req, res) => {
     await query('DELETE FROM notifications');
     res.status(204).send();
+  })
+);
+
+// Lesson deliveries (mark taught + grasp feedback)
+apiRouter.post(
+  '/lesson-deliveries',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
+    const graspOutcome = b.graspOutcome as string;
+    if (!['well_grasped', 'majority_grasped', 'challenged'].includes(graspOutcome)) {
+      res.status(400).json({ error: 'Invalid grasp outcome' });
+      return;
+    }
+    if (graspOutcome === 'challenged' && !String(b.challengeText ?? '').trim()) {
+      res.status(400).json({ error: 'Challenge / opportunity text required' });
+      return;
+    }
+
+    const noteResult = await query('SELECT * FROM teaching_notes WHERE id = $1', [
+      b.teachingNoteId,
+    ]);
+    if (!noteResult.rows.length) {
+      res.status(404).json({ error: 'Teaching note not found' });
+      return;
+    }
+    const note = noteResult.rows[0];
+    const noteStatus = String(note.status || '');
+    if (noteStatus !== 'Approved') {
+      // Soft path: classroom delivery implies the note was taught — promote to Approved
+      // so HoD exam topics and delivery lists stay consistent.
+      if (['Draft', 'Saved', 'Pending Dept Head'].includes(noteStatus)) {
+        await query(
+          `UPDATE teaching_notes
+           SET status = 'Approved',
+               dept_comments = COALESCE(NULLIF(TRIM(dept_comments), ''), 'Auto-approved — classroom delivery recorded.'),
+               updated_at = CURRENT_DATE
+           WHERE id = $1`,
+          [note.id],
+        );
+        note.status = 'Approved';
+      } else {
+        res.status(400).json({
+          error: 'Only approved teaching notes can be marked delivered. Wait for department head approval first.',
+        });
+        return;
+      }
+    }
+
+    const existingResult = await query(
+      'SELECT * FROM lesson_deliveries WHERE teaching_note_id = $1',
+      [b.teachingNoteId],
+    );
+    if (existingResult.rows.length) {
+      res.status(409).json({
+        error: 'This note is already marked delivered',
+        delivery: mapLessonDelivery(existingResult.rows[0]),
+      });
+      return;
+    }
+
+    const { rows: teacherRows } = await query('SELECT * FROM teachers WHERE id = $1', [teacherId]);
+    const teacher = teacherRows[0];
+    const departmentId = (teacher?.department_id as string | null) ?? null;
+    const teacherName = (teacher?.name as string) ?? 'Teacher';
+
+    const postedToHod = Boolean(b.postedToHod);
+    const postedToCommunity = Boolean(b.postedToCommunity);
+    const deliveryId = b.id ?? `ld-${Date.now()}`;
+    let communityPostId: string | null = null;
+    let communityMessage: ReturnType<typeof mapCommunityMessage> | null = null;
+
+    const challengeBody =
+      graspOutcome === 'challenged' ? String(b.challengeText).trim() : '';
+
+    // Resolve + authorize the Discord-style community channel before writing anything.
+    let resolvedChannelId = '';
+    let resolvedCommunityId = '';
+    let requestUser: Awaited<ReturnType<typeof getRequestUser>> = null;
+    if (graspOutcome === 'challenged' && postedToCommunity) {
+      requestUser = await getRequestUser(req);
+      if (!requestUser) {
+        res.status(401).json({ error: 'Sign in to post a challenge to a community.' });
+        return;
+      }
+
+      resolvedChannelId = String(b.channelId ?? '').trim();
+      resolvedCommunityId = String(b.communityId ?? '').trim();
+
+      if (!resolvedChannelId && resolvedCommunityId) {
+        const { rows: chRows } = await query(
+          `SELECT id FROM community_channels
+           WHERE community_id = $1
+           ORDER BY
+             CASE WHEN LOWER(name) = 'general' THEN 0 WHEN type = 'text' THEN 1 ELSE 2 END,
+             position ASC
+           LIMIT 1`,
+          [resolvedCommunityId],
+        );
+        resolvedChannelId = chRows[0]?.id ? String(chRows[0].id) : '';
+      }
+
+      if (!resolvedChannelId) {
+        res.status(400).json({
+          error: 'Select a community channel to post this challenge into.',
+        });
+        return;
+      }
+
+      const { rows: chMeta } = await query(
+        'SELECT community_id FROM community_channels WHERE id = $1',
+        [resolvedChannelId],
+      );
+      if (!chMeta.length) {
+        res.status(404).json({ error: 'Community channel not found' });
+        return;
+      }
+      resolvedCommunityId = String(chMeta[0].community_id);
+      const memberRole = await requireCommunityMembership(
+        requestUser.id,
+        resolvedCommunityId,
+        res,
+      );
+      if (!memberRole) return;
+    }
+
+    if (graspOutcome === 'challenged' && postedToCommunity) {
+      communityPostId = `cp-${Date.now()}`;
+      const title =
+        String(b.challengeTitle ?? '').trim() ||
+        `Challenge: ${note.topic || note.title}`;
+      await query(
+        `INSERT INTO community_posts
+         (id, author_id, author_name, author_role, department_id, subject, grade, title, body, teaching_note_id, lesson_plan_id, created_at)
+         VALUES ($1,$2,$3,'teacher',$4,$5,$6,$7,$8,$9,$10,NOW())`,
+        [
+          communityPostId,
+          teacherId,
+          teacherName,
+          departmentId,
+          note.subject,
+          note.grade,
+          title,
+          challengeBody,
+          note.id,
+          note.lesson_plan_id ?? b.lessonPlanId ?? null,
+        ],
+      );
+
+      const msgContent = [
+        `**Classroom challenge** after delivering "${note.title}"`,
+        note.subject || note.grade
+          ? `_${[note.grade, note.subject].filter(Boolean).join(' · ')}_`
+          : '',
+        '',
+        challengeBody,
+      ]
+        .filter((line, i, arr) => !(line === '' && arr[i - 1] === ''))
+        .join('\n');
+
+      const msgId = `cmsg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await query(
+        `INSERT INTO community_messages (id, channel_id, thread_id, author_id, author_name, author_role, content)
+         VALUES ($1,$2,NULL,$3,$4,$5,$6)`,
+        [
+          msgId,
+          resolvedChannelId,
+          requestUser!.id,
+          requestUser!.displayName,
+          requestUser!.role,
+          msgContent,
+        ],
+      );
+      await query(
+        `INSERT INTO community_channel_reads (channel_id, user_id, last_read_at) VALUES ($1,$2,NOW())
+         ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+        [resolvedChannelId, requestUser!.id],
+      );
+      const { rows: msgRows } = await query(
+        'SELECT * FROM community_messages WHERE id = $1',
+        [msgId],
+      );
+      if (msgRows.length) {
+        communityMessage = mapCommunityMessage(msgRows[0], []);
+      }
+    }
+
+    await query(
+      `INSERT INTO lesson_deliveries
+       (id, teaching_note_id, lesson_plan_id, teacher_id, grasp_outcome, challenge_text, posted_to_hod, posted_to_community, community_post_id, delivered_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+      [
+        deliveryId,
+        note.id,
+        note.lesson_plan_id ?? b.lessonPlanId ?? null,
+        teacherId,
+        graspOutcome,
+        graspOutcome === 'challenged' ? challengeBody : null,
+        postedToHod,
+        postedToCommunity,
+        communityPostId,
+      ],
+    );
+
+    if (graspOutcome === 'challenged' && postedToHod) {
+      const msgId = `sm-${Date.now()}`;
+      await query(
+        `INSERT INTO staff_messages
+         (id, teacher_id, department_id, sender_id, sender_name, sender_role, body, related_delivery_id, related_post_id, read, created_at)
+         VALUES ($1,$2,$3,$4,$5,'teacher',$6,$7,$8,false,NOW())`,
+        [
+          msgId,
+          teacherId,
+          departmentId,
+          teacherId,
+          teacherName,
+          `Classroom challenge / opportunity after delivering "${note.title}":\n\n${challengeBody}`,
+          deliveryId,
+          communityPostId,
+        ],
+      );
+      await insertNotification(
+        'Classroom challenge shared',
+        `${teacherName} posted a challenge after delivering "${note.title}".`,
+        'request',
+        '/dashboard/department-head/communication'
+      );
+    }
+
+    const { rows } = await query('SELECT * FROM lesson_deliveries WHERE id = $1', [deliveryId]);
+    const delivery = mapLessonDelivery(rows[0]);
+    let communityPost: ReturnType<typeof mapCommunityPost> | null = null;
+    if (communityPostId) {
+      const { rows: postRows } = await query('SELECT * FROM community_posts WHERE id = $1', [
+        communityPostId,
+      ]);
+      if (postRows.length) communityPost = mapCommunityPost(postRows[0]);
+    }
+    res.status(201).json({ delivery, communityPost, communityMessage });
+  })
+);
+
+// Community posts & threaded replies
+apiRouter.get(
+  '/community/posts',
+  asyncHandler(async (_req, res) => {
+    const posts = await query('SELECT * FROM community_posts ORDER BY created_at DESC');
+    const replies = await query('SELECT * FROM community_replies ORDER BY created_at ASC');
+    res.json({
+      posts: posts.rows.map(mapCommunityPost),
+      replies: replies.rows.map(mapCommunityReply),
+    });
+  })
+);
+
+apiRouter.post(
+  '/community/posts',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const id = b.id ?? `cp-${Date.now()}`;
+    await query(
+      `INSERT INTO community_posts
+       (id, author_id, author_name, author_role, department_id, subject, grade, title, body, teaching_note_id, lesson_plan_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+      [
+        id,
+        b.authorId,
+        b.authorName,
+        b.authorRole ?? 'teacher',
+        b.departmentId ?? null,
+        b.subject ?? null,
+        b.grade ?? null,
+        b.title,
+        b.body,
+        b.teachingNoteId ?? null,
+        b.lessonPlanId ?? null,
+      ],
+    );
+    const { rows } = await query('SELECT * FROM community_posts WHERE id = $1', [id]);
+    res.status(201).json(mapCommunityPost(rows[0]));
+  })
+);
+
+apiRouter.post(
+  '/community/posts/:id/replies',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const postId = req.params.id;
+    const { rows: posts } = await query('SELECT id FROM community_posts WHERE id = $1', [postId]);
+    if (!posts.length) {
+      res.status(404).json({ error: 'Post not found' });
+      return;
+    }
+    const id = b.id ?? `cr-${Date.now()}`;
+    await query(
+      `INSERT INTO community_replies
+       (id, post_id, parent_reply_id, author_id, author_name, author_role, body, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+      [
+        id,
+        postId,
+        b.parentReplyId ?? null,
+        b.authorId,
+        b.authorName,
+        b.authorRole ?? 'teacher',
+        b.body,
+      ],
+    );
+    const { rows } = await query('SELECT * FROM community_replies WHERE id = $1', [id]);
+    res.status(201).json(mapCommunityReply(rows[0]));
+  })
+);
+
+// Discord-style communities: department "Teachers" communities + a school-wide "Heads of
+// Department" community. Teachers only see their own department's community; HoDs see both.
+apiRouter.get(
+  '/communities',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    await ensureCommunitiesSeeded();
+    const { rows } = await query(
+      `SELECT c.*, cm.role AS member_role,
+        COALESCE((
+          SELECT COUNT(*) FROM community_messages msg
+          JOIN community_channels ch ON ch.id = msg.channel_id
+          LEFT JOIN community_channel_reads r ON r.channel_id = ch.id AND r.user_id = $1
+          WHERE ch.community_id = c.id
+            AND msg.author_id != $1
+            AND msg.is_deleted = FALSE
+            AND msg.created_at > COALESCE(r.last_read_at, cm.joined_at)
+        ), 0) AS unread_count
+       FROM communities c
+       JOIN community_members cm ON cm.community_id = c.id AND cm.user_id = $1
+       ORDER BY (c.type = 'department') DESC, c.name ASC`,
+      [user.id]
+    );
+    res.json(rows.map(mapCommunity));
+  })
+);
+
+apiRouter.post(
+  '/communities',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const b = req.body as {
+      name?: string;
+      description?: string;
+      type?: string;
+      departmentId?: string;
+      iconUrl?: string;
+    };
+    if (!b.name?.trim()) {
+      res.status(400).json({ error: 'Community name is required' });
+      return;
+    }
+    const id = `community-${Date.now()}`;
+    await query(
+      `INSERT INTO communities (id, name, description, icon_url, type, department_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        id,
+        b.name.trim(),
+        b.description?.trim() || '',
+        b.iconUrl ?? null,
+        b.type || 'custom',
+        b.departmentId ?? null,
+        user.id,
+      ]
+    );
+    await ensureDefaultChannels(id);
+    await query(
+      `INSERT INTO community_members (id, community_id, user_id, role) VALUES ($1,$2,$3,'owner')`,
+      [`${id}-${user.id}`, id, user.id]
+    );
+    const { rows } = await query(
+      `SELECT c.*, 'owner' AS member_role, 0 AS unread_count FROM communities c WHERE c.id = $1`,
+      [id]
+    );
+    res.status(201).json(mapCommunity(rows[0]));
+  })
+);
+
+apiRouter.get(
+  '/communities/:id/channels',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, String(req.params.id), res);
+    if (!role) return;
+    const { rows } = await query(
+      `SELECT cc.*,
+        COALESCE((
+          SELECT COUNT(*) FROM community_messages m
+          WHERE m.channel_id = cc.id AND m.author_id != $2 AND m.is_deleted = FALSE
+            AND m.created_at > COALESCE(
+              (SELECT last_read_at FROM community_channel_reads r WHERE r.channel_id = cc.id AND r.user_id = $2),
+              '1970-01-01'
+            )
+        ), 0) AS unread_count
+       FROM community_channels cc
+       WHERE cc.community_id = $1
+       ORDER BY cc.position ASC, cc.created_at ASC`,
+      [req.params.id, user.id]
+    );
+    res.json(rows.map(mapCommunityChannel));
+  })
+);
+
+apiRouter.post(
+  '/communities/:id/channels',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, String(req.params.id), res);
+    if (!role) return;
+    if (role !== 'owner' && role !== 'admin') {
+      res.status(403).json({ error: 'Only community admins can create channels' });
+      return;
+    }
+    const b = req.body as { name?: string; description?: string; type?: string };
+    if (!b.name?.trim()) {
+      res.status(400).json({ error: 'Channel name is required' });
+      return;
+    }
+    const id = `chn-${Date.now()}`;
+    const { rows: posRows } = await query(
+      'SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM community_channels WHERE community_id = $1',
+      [req.params.id]
+    );
+    await query(
+      `INSERT INTO community_channels (id, community_id, name, description, type, position)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        id,
+        req.params.id,
+        b.name.trim().toLowerCase().replace(/\s+/g, '-'),
+        b.description?.trim() || '',
+        b.type || 'text',
+        posRows[0].pos,
+      ]
+    );
+    const { rows } = await query(
+      'SELECT *, 0 AS unread_count FROM community_channels WHERE id = $1',
+      [id]
+    );
+    res.status(201).json(mapCommunityChannel(rows[0]));
+  })
+);
+
+apiRouter.get(
+  '/communities/:id/members',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, String(req.params.id), res);
+    if (!role) return;
+    const { rows } = await query(
+      `SELECT cm.*, pu.display_name, pu.email, pu.role AS user_role
+       FROM community_members cm
+       JOIN portal_users pu ON pu.id = cm.user_id
+       WHERE cm.community_id = $1
+       ORDER BY pu.display_name ASC`,
+      [req.params.id]
+    );
+    res.json(rows.map(mapCommunityMember));
+  })
+);
+
+apiRouter.get(
+  '/communities/:id/mention-suggestions',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, String(req.params.id), res);
+    if (!role) return;
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const { rows } = await query(
+      `SELECT pu.id, pu.display_name, pu.email, pu.role
+       FROM community_members cm
+       JOIN portal_users pu ON pu.id = cm.user_id
+       WHERE cm.community_id = $1 AND ($2 = '' OR LOWER(pu.display_name) LIKE '%' || $2 || '%')
+       ORDER BY pu.display_name ASC
+       LIMIT 8`,
+      [req.params.id, q]
+    );
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        displayName: r.display_name,
+        email: r.email,
+        role: r.role,
+      }))
+    );
+  })
+);
+
+apiRouter.get(
+  '/channels/:id/messages',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows: chRows } = await query(
+      'SELECT community_id FROM community_channels WHERE id = $1',
+      [req.params.id]
+    );
+    if (!chRows.length) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, chRows[0].community_id, res);
+    if (!role) return;
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const before = typeof req.query.before === 'string' ? req.query.before : null;
+    const params: unknown[] = [req.params.id];
+    let whereBefore = '';
+    if (before) {
+      params.push(before);
+      whereBefore = `AND m.created_at < (SELECT created_at FROM community_messages WHERE id = $${params.length})`;
+    }
+    params.push(limit + 1);
+    const { rows } = await query(
+      `SELECT m.*,
+        (SELECT t.id FROM community_threads t WHERE t.root_message_id = m.id LIMIT 1) AS thread_id_for_root,
+        (SELECT COUNT(*) FROM community_messages tm
+          WHERE tm.thread_id = (SELECT t.id FROM community_threads t WHERE t.root_message_id = m.id LIMIT 1)
+            AND tm.is_deleted = FALSE) AS thread_reply_count
+       FROM community_messages m
+       WHERE m.channel_id = $1 AND m.is_deleted = FALSE ${whereBefore}
+       ORDER BY m.created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit).reverse();
+    const messages = await attachReactions(page, user.id);
+    res.json({ messages, hasMore });
+  })
+);
+
+apiRouter.post(
+  '/channels/:id/messages',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows: chRows } = await query(
+      'SELECT community_id FROM community_channels WHERE id = $1',
+      [req.params.id]
+    );
+    if (!chRows.length) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+    const role = await requireCommunityMembership(user.id, chRows[0].community_id, res);
+    if (!role) return;
+    const content = String((req.body as { content?: string }).content || '').trim();
+    if (!content) {
+      res.status(400).json({ error: 'Message cannot be empty' });
+      return;
+    }
+    const id = `cmsg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await query(
+      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, author_name, author_role, content)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6)`,
+      [id, req.params.id, user.id, user.displayName, user.role, content]
+    );
+    await query(
+      `INSERT INTO community_channel_reads (channel_id, user_id, last_read_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+      [req.params.id, user.id]
+    );
+    await createMentionNotifications(id, content, chRows[0].community_id, user.id);
+    const { rows } = await query('SELECT * FROM community_messages WHERE id = $1', [id]);
+    res.status(201).json(mapCommunityMessage(rows[0], []));
+  })
+);
+
+apiRouter.post(
+  '/channels/:id/read',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    await query(
+      `INSERT INTO community_channel_reads (channel_id, user_id, last_read_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+      [req.params.id, user.id]
+    );
+    res.json({ ok: true });
+  })
+);
+
+apiRouter.post(
+  '/messages/:id/thread',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows: msgRows } = await query('SELECT * FROM community_messages WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!msgRows.length) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+    const msg = msgRows[0];
+    if (!msg.channel_id) {
+      res.status(400).json({ error: 'Only channel messages can start a thread' });
+      return;
+    }
+    const { rows: chRows } = await query(
+      'SELECT community_id FROM community_channels WHERE id = $1',
+      [msg.channel_id]
+    );
+    const role = await requireCommunityMembership(user.id, chRows[0]?.community_id, res);
+    if (!role) return;
+    const { rows: existing } = await query(
+      'SELECT * FROM community_threads WHERE root_message_id = $1',
+      [req.params.id]
+    );
+    if (existing.length) {
+      res.status(200).json(mapCommunityThread(existing[0], 0));
+      return;
+    }
+    const id = `thr-${Date.now()}`;
+    const title = String((req.body as { title?: string }).title || msg.content).slice(0, 80);
+    await query(
+      `INSERT INTO community_threads (id, channel_id, title, created_by, root_message_id)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [id, msg.channel_id, title, user.id, req.params.id]
+    );
+    const { rows } = await query('SELECT * FROM community_threads WHERE id = $1', [id]);
+    res.status(201).json(mapCommunityThread(rows[0], 0));
+  })
+);
+
+apiRouter.get(
+  '/threads/:id',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows } = await query('SELECT * FROM community_threads WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+    const { rows: countRows } = await query(
+      'SELECT COUNT(*)::int AS c FROM community_messages WHERE thread_id = $1 AND is_deleted = FALSE',
+      [req.params.id]
+    );
+    res.json(mapCommunityThread(rows[0], countRows[0].c));
+  })
+);
+
+apiRouter.get(
+  '/threads/:id/messages',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows: threadRows } = await query('SELECT * FROM community_threads WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!threadRows.length) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+    const thread = threadRows[0];
+    let rootMessage: ReturnType<typeof mapCommunityMessage> | null = null;
+    if (thread.root_message_id) {
+      const { rows: rootRows } = await query('SELECT * FROM community_messages WHERE id = $1', [
+        thread.root_message_id,
+      ]);
+      if (rootRows.length) rootMessage = mapCommunityMessage(rootRows[0], []);
+    }
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const { rows } = await query(
+      `SELECT * FROM community_messages WHERE thread_id = $1 AND is_deleted = FALSE
+       ORDER BY created_at ASC LIMIT $2`,
+      [req.params.id, limit]
+    );
+    const messages = await attachReactions(rows, user.id);
+    const { rows: countRows } = await query(
+      'SELECT COUNT(*)::int AS c FROM community_messages WHERE thread_id = $1 AND is_deleted = FALSE',
+      [req.params.id]
+    );
+    res.json({
+      thread: mapCommunityThread(thread, countRows[0].c),
+      rootMessage,
+      messages,
+      hasMore: false,
+    });
+  })
+);
+
+apiRouter.post(
+  '/threads/:id/messages',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows: threadRows } = await query('SELECT * FROM community_threads WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!threadRows.length) {
+      res.status(404).json({ error: 'Thread not found' });
+      return;
+    }
+    const content = String((req.body as { content?: string }).content || '').trim();
+    if (!content) {
+      res.status(400).json({ error: 'Message cannot be empty' });
+      return;
+    }
+    const id = `tmsg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await query(
+      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, author_name, author_role, content)
+       VALUES ($1,NULL,$2,$3,$4,$5,$6)`,
+      [id, req.params.id, user.id, user.displayName, user.role, content]
+    );
+    const { rows: chanRows } = await query(
+      'SELECT community_id FROM community_channels WHERE id = $1',
+      [threadRows[0].channel_id]
+    );
+    if (chanRows.length) {
+      await createMentionNotifications(id, content, chanRows[0].community_id, user.id);
+    }
+    const { rows } = await query('SELECT * FROM community_messages WHERE id = $1', [id]);
+    res.status(201).json(mapCommunityMessage(rows[0], []));
+  })
+);
+
+apiRouter.post(
+  '/threads/:id/read',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    await query(
+      `INSERT INTO community_thread_reads (thread_id, user_id, last_read_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (thread_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+      [req.params.id, user.id]
+    );
+    res.json({ ok: true });
+  })
+);
+
+apiRouter.post(
+  '/messages/:id/reactions',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const emoji = String((req.body as { emoji?: string }).emoji || '').trim();
+    if (!emoji) {
+      res.status(400).json({ error: 'Emoji is required' });
+      return;
+    }
+    const { rows: existing } = await query(
+      'SELECT id FROM community_message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3',
+      [req.params.id, user.id, emoji]
+    );
+    if (existing.length) {
+      await query('DELETE FROM community_message_reactions WHERE id = $1', [existing[0].id]);
+      res.json({ toggled: 'removed', emoji });
+      return;
+    }
+    await query(
+      `INSERT INTO community_message_reactions (id, message_id, user_id, emoji) VALUES ($1,$2,$3,$4)`,
+      [`rxn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, req.params.id, user.id, emoji]
+    );
+    res.json({ toggled: 'added', emoji });
+  })
+);
+
+apiRouter.delete(
+  '/messages/:id',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows } = await query('SELECT author_id FROM community_messages WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+    const isModerator = ['department-head', 'school-head', 'moe'].includes(user.role);
+    if (rows[0].author_id !== user.id && !isModerator) {
+      res.status(403).json({ error: 'Not allowed to delete this message' });
+      return;
+    }
+    await query('UPDATE community_messages SET is_deleted = TRUE WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+  })
+);
+
+apiRouter.patch(
+  '/messages/:id',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows } = await query('SELECT author_id FROM community_messages WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+    if (rows[0].author_id !== user.id) {
+      res.status(403).json({ error: 'Not allowed to edit this message' });
+      return;
+    }
+    const content = String((req.body as { content?: string }).content || '').trim();
+    if (!content) {
+      res.status(400).json({ error: 'Message cannot be empty' });
+      return;
+    }
+    await query('UPDATE community_messages SET content = $1, edited_at = NOW() WHERE id = $2', [
+      content,
+      req.params.id,
+    ]);
+    const { rows: updated } = await query('SELECT * FROM community_messages WHERE id = $1', [
+      req.params.id,
+    ]);
+    res.json(mapCommunityMessage(updated[0], []));
+  })
+);
+
+apiRouter.get(
+  '/community/notifications',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    const { rows } = await query(
+      `SELECT n.*, m.content, m.author_name, m.channel_id, m.thread_id, cc.community_id
+       FROM community_mention_notifications n
+       JOIN community_messages m ON m.id = n.message_id
+       LEFT JOIN community_threads th ON th.id = m.thread_id
+       LEFT JOIN community_channels cc ON cc.id = COALESCE(m.channel_id, th.channel_id)
+       WHERE n.user_id = $1
+       ORDER BY n.created_at DESC
+       LIMIT 50`,
+      [user.id]
+    );
+    res.json(rows.map(mapMentionNotification));
+  })
+);
+
+apiRouter.post(
+  '/community/notifications/:id/read',
+  asyncHandler(async (req, res) => {
+    await query('UPDATE community_mention_notifications SET is_read = TRUE WHERE id = $1', [
+      req.params.id,
+    ]);
+    res.json({ ok: true });
+  })
+);
+
+apiRouter.post(
+  '/community/notifications/read-all',
+  asyncHandler(async (req, res) => {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Missing or unknown user' });
+      return;
+    }
+    await query('UPDATE community_mention_notifications SET is_read = TRUE WHERE user_id = $1', [
+      user.id,
+    ]);
+    res.json({ ok: true });
+  })
+);
+
+// Teacher ↔ HoD staff messages (polled for near-real-time)
+apiRouter.get(
+  '/staff-messages',
+  asyncHandler(async (req, res) => {
+    const teacherId = typeof req.query.teacherId === 'string' ? req.query.teacherId : null;
+    const departmentId =
+      typeof req.query.departmentId === 'string' ? req.query.departmentId : null;
+    const since = typeof req.query.since === 'string' ? req.query.since : null;
+
+    let sql = 'SELECT * FROM staff_messages WHERE 1=1';
+    const vals: unknown[] = [];
+    let i = 1;
+    if (teacherId) {
+      sql += ` AND teacher_id = $${i++}`;
+      vals.push(teacherId);
+    }
+    if (departmentId) {
+      sql += ` AND department_id = $${i++}`;
+      vals.push(departmentId);
+    }
+    if (since) {
+      sql += ` AND created_at > $${i++}`;
+      vals.push(since);
+    }
+    sql += ' ORDER BY created_at ASC';
+    const { rows } = await query(sql, vals);
+    res.json(rows.map(mapStaffMessage));
+  })
+);
+
+apiRouter.post(
+  '/staff-messages',
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    if (!b.teacherId || !b.body?.trim() || !b.senderId || !b.senderName || !b.senderRole) {
+      res.status(400).json({ error: 'Missing required message fields' });
+      return;
+    }
+    const id = b.id ?? `sm-${Date.now()}`;
+    let departmentId = b.departmentId ?? null;
+    if (!departmentId) {
+      const { rows: tch } = await query('SELECT department_id FROM teachers WHERE id = $1', [
+        b.teacherId,
+      ]);
+      departmentId = tch[0]?.department_id ?? null;
+    }
+    await query(
+      `INSERT INTO staff_messages
+       (id, teacher_id, department_id, sender_id, sender_name, sender_role, body, related_delivery_id, related_post_id, read, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,NOW())`,
+      [
+        id,
+        b.teacherId,
+        departmentId,
+        b.senderId,
+        b.senderName,
+        b.senderRole,
+        String(b.body).trim(),
+        b.relatedDeliveryId ?? null,
+        b.relatedPostId ?? null,
+      ],
+    );
+    if (b.senderRole === 'teacher') {
+      const isMissReport = String(b.body).includes('[GRADE_MISS_REPORT]');
+      await insertNotification(
+        isMissReport ? 'Grade gap report' : 'Message from teacher',
+        `${b.senderName}: ${String(b.body).trim().slice(0, 120)}`,
+        isMissReport ? 'request' : 'info',
+        isMissReport
+          ? '/dashboard/department-head/training'
+          : '/dashboard/department-head/communication',
+      );
+    } else {
+      await insertNotification(
+        'Message from HoD',
+        `${b.senderName}: ${String(b.body).trim().slice(0, 120)}`,
+        'info',
+        '/dashboard/teacher/communication',
+      );
+    }
+    const { rows } = await query('SELECT * FROM staff_messages WHERE id = $1', [id]);
+    res.status(201).json(mapStaffMessage(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/staff-messages/mark-read',
+  asyncHandler(async (req, res) => {
+    const { teacherId, readerRole } = req.body as {
+      teacherId?: string;
+      readerRole?: 'teacher' | 'department-head';
+    };
+    if (!teacherId || !readerRole) {
+      res.status(400).json({ error: 'teacherId and readerRole required' });
+      return;
+    }
+    const opposite = readerRole === 'teacher' ? 'department-head' : 'teacher';
+    await query(
+      `UPDATE staff_messages SET read = true WHERE teacher_id = $1 AND sender_role = $2 AND read = false`,
+      [teacherId, opposite],
+    );
+    res.json({ ok: true });
   })
 );
