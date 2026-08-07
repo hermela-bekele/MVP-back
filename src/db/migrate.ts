@@ -6,9 +6,12 @@ import { pool } from './pool.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function migrate() {
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf-8');
-  await pool.query(sql);
+  for (const file of ['schema.sql', 'schema_portal.sql', 'schema_community.sql']) {
+    const schemaPath = path.join(__dirname, file);
+    const sql = fs.readFileSync(schemaPath, 'utf-8');
+    await pool.query(sql);
+    console.log(`Applied ${file}`);
+  }
   console.log('Database schema applied successfully.');
   await pool.end();
 }

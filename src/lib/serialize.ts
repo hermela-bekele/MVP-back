@@ -309,6 +309,7 @@ export function mapStudentGradeEntry(row: Record<string, unknown>) {
     term: row.term,
     recordedAt: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
     remarks: row.remarks ?? undefined,
+    published: Boolean(row.published),
     questionResults: Array.isArray(questionResults) ? questionResults : undefined,
   };
 }
