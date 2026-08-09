@@ -559,7 +559,7 @@ communityRouter.get(
       return;
     }
 
-    let rootMessage = null;
+    let rootMessage: ReturnType<typeof mapMessage> | null = null;
     if (thread.root_message_id) {
       const rootRes = await query(`${MESSAGE_SELECT} WHERE m.id = $1`, [thread.root_message_id]);
       if (rootRes.rows[0]) {
