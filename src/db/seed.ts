@@ -45,7 +45,7 @@ const PORTAL_USERS = [
     subject: 'Biology',
     departmentId: 'dept-bio',
   },
-  { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa' },
+  { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa', subject: 'Mathematics', departmentId: 'dept-math' },
   { id: 'usr-teacher-math', email: 'abebe.kebede@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Abebe Kebede' },
   { id: 'usr-student', email: 'selam.abebe@std.edu.et', password: 'student123', role: 'student', displayName: 'Selam Abebe' },
   { id: 'usr-parent', email: 'abebe.demeke@gmail.com', password: 'parent123', role: 'parent', displayName: 'Abebe Demeke' },
@@ -105,9 +105,9 @@ async function seed() {
 
   for (const t of mockTeachers) {
     await query(
-      `INSERT INTO teachers (id, name, email, phone, department_id, school_id, status, subjects, grades, certification, training_progress)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [t.id, t.name, t.email, t.phone, t.departmentId, t.schoolId, t.status, JSON.stringify(t.subjects), JSON.stringify(t.grades), t.certification, t.trainingProgress]
+      `INSERT INTO teachers (id, name, email, phone, department_id, school_id, status, subjects, grades, certification, training_progress, years_experience)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [t.id, t.name, t.email, t.phone, t.departmentId, t.schoolId, t.status, JSON.stringify(t.subjects), JSON.stringify(t.grades), t.certification, t.trainingProgress, t.yearsOfExperience ?? 0]
     );
   }
 
@@ -127,10 +127,35 @@ async function seed() {
   }
 
   for (const lp of mockLessonPlans) {
+    const plan = lp as typeof lp & {
+      planType?: string;
+      planDetail?: string | null;
+      createdByRole?: string;
+    };
     await query(
-      `INSERT INTO lesson_plans (id, subject, grade, title, sessions, teacher_id, teacher_name, status, dept_comments, school_head_comments, version, objectives, activities, assessments, homework, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [lp.id, lp.subject, lp.grade, lp.title, lp.sessions, lp.teacherId, lp.teacherName, lp.status, lp.deptComments ?? null, lp.schoolHeadComments ?? null, lp.version, JSON.stringify(lp.objectives), JSON.stringify(lp.activities), JSON.stringify(lp.assessments), lp.homework, lp.createdAt]
+      `INSERT INTO lesson_plans (id, subject, grade, title, sessions, teacher_id, teacher_name, status, dept_comments, school_head_comments, version, objectives, activities, assessments, homework, plan_type, plan_detail, created_by_role, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      [
+        plan.id,
+        plan.subject,
+        plan.grade,
+        plan.title,
+        plan.sessions,
+        plan.teacherId,
+        plan.teacherName,
+        plan.status,
+        plan.deptComments ?? null,
+        plan.schoolHeadComments ?? null,
+        plan.version,
+        JSON.stringify(plan.objectives),
+        JSON.stringify(plan.activities),
+        JSON.stringify(plan.assessments),
+        plan.homework,
+        plan.planType ?? 'weekly',
+        plan.planDetail ?? null,
+        plan.createdByRole ?? 'teacher',
+        plan.createdAt,
+      ]
     );
   }
 
@@ -188,26 +213,27 @@ async function seed() {
   }
 
   for (const ge of mockStudentGradeEntries) {
+    const entry = ge as typeof ge & { questionResults?: unknown };
     await query(
       `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks, question_results)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
       [
-        ge.id,
-        ge.studentId,
-        ge.teacherId,
-        ge.subject,
-        ge.gradeLevel,
-        ge.section,
-        ge.entryType,
-        ge.title,
-        ge.assessmentId ?? null,
-        ge.score,
-        ge.maxScore,
-        ge.weight,
-        ge.term,
-        ge.recordedAt,
-        ge.remarks ?? null,
-        ge.questionResults ? JSON.stringify(ge.questionResults) : null,
+        entry.id,
+        entry.studentId,
+        entry.teacherId,
+        entry.subject,
+        entry.gradeLevel,
+        entry.section,
+        entry.entryType,
+        entry.title,
+        entry.assessmentId ?? null,
+        entry.score,
+        entry.maxScore,
+        entry.weight,
+        entry.term,
+        entry.recordedAt,
+        entry.remarks ?? null,
+        entry.questionResults ? JSON.stringify(entry.questionResults) : null,
       ]
     );
   }

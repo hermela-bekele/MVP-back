@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=500 tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
     "db:migrate": "tsx src/db/migrate.ts",

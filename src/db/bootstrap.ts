@@ -20,6 +20,12 @@ import {
   mapParentMessage,
   mapTeacherCheckInPrompt,
   mapNotification,
+  mapLessonDelivery,
+  mapCommunityPost,
+  mapCommunityReply,
+  mapStaffMessage,
+  mapTeacherSelfAssessment,
+  mapTeacherTrainingAssignment,
 } from '../lib/serialize.js';
 
 export async function loadBootstrap() {
@@ -44,6 +50,12 @@ export async function loadBootstrap() {
     teacherCheckInPrompts,
     notifications,
     academicCalendars,
+    lessonDeliveries,
+    communityPosts,
+    communityReplies,
+    staffMessages,
+    teacherSelfAssessments,
+    teacherTrainingAssignments,
   ] = await Promise.all([
     query('SELECT * FROM schools ORDER BY name'),
     query('SELECT * FROM departments ORDER BY name'),
@@ -65,6 +77,12 @@ export async function loadBootstrap() {
     query('SELECT * FROM teacher_check_in_prompts ORDER BY due_date'),
     query('SELECT * FROM notifications ORDER BY created_at DESC'),
     query('SELECT * FROM academic_calendars ORDER BY created_at DESC'),
+    query('SELECT * FROM lesson_deliveries ORDER BY delivered_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM community_posts ORDER BY created_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM community_replies ORDER BY created_at ASC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM staff_messages ORDER BY created_at ASC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM teacher_self_assessments ORDER BY submitted_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM teacher_training_assignments ORDER BY created_at DESC').catch(() => ({ rows: [] })),
   ]);
 
   return {
@@ -88,5 +106,11 @@ export async function loadBootstrap() {
     teacherCheckInPrompts: teacherCheckInPrompts.rows.map(mapTeacherCheckInPrompt),
     notifications: notifications.rows.map(mapNotification),
     academicCalendars: academicCalendars.rows.map(mapAcademicCalendar),
+    lessonDeliveries: lessonDeliveries.rows.map(mapLessonDelivery),
+    communityPosts: communityPosts.rows.map(mapCommunityPost),
+    communityReplies: communityReplies.rows.map(mapCommunityReply),
+    staffMessages: staffMessages.rows.map(mapStaffMessage),
+    teacherSelfAssessments: teacherSelfAssessments.rows.map(mapTeacherSelfAssessment),
+    teacherTrainingAssignments: teacherTrainingAssignments.rows.map(mapTeacherTrainingAssignment),
   };
 }

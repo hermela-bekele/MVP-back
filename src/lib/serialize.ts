@@ -42,6 +42,36 @@ export function mapTeacher(row: Record<string, unknown>) {
     grades: row.grades ?? [],
     certification: row.certification,
     trainingProgress: Number(row.training_progress),
+    yearsOfExperience: Number(row.years_experience ?? 0),
+    experienceOverride: row.experience_override ?? null,
+  };
+}
+
+export function mapTeacherSelfAssessment(row: Record<string, unknown>) {
+  const d = row.submitted_at;
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    responses: row.responses ?? [],
+    overallScore: Number(row.overall_score),
+    weakestCompetencyId: row.weakest_competency_id ?? undefined,
+    submittedAt:
+      d instanceof Date ? d.toISOString() : String(d),
+  };
+}
+
+export function mapTeacherTrainingAssignment(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    program: row.program,
+    moduleId: row.module_id,
+    moduleTitle: row.module_title,
+    assignedByName: row.assigned_by_name,
+    reason: row.reason ?? undefined,
+    status: row.status,
+    createdAt: d instanceof Date ? d.toISOString() : String(d),
   };
 }
 
@@ -116,6 +146,7 @@ export function mapAssessment(row: Record<string, unknown>) {
     comments: row.comments ?? undefined,
     difficulty: row.difficulty,
     questions: row.questions ?? [],
+    createdByRole: (row.created_by_role as string) || 'teacher',
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString()
@@ -352,5 +383,176 @@ export function mapNotification(row: Record<string, unknown>) {
     timestamp: row.timestamp_label,
     read: Boolean(row.read),
     type: row.type,
+    linkPath: (row.link_path as string) || undefined,
+  };
+}
+
+export function mapLessonDelivery(row: Record<string, unknown>) {
+  const d = row.delivered_at;
+  return {
+    id: row.id,
+    teachingNoteId: row.teaching_note_id,
+    lessonPlanId: row.lesson_plan_id ?? undefined,
+    teacherId: row.teacher_id,
+    graspOutcome: row.grasp_outcome,
+    challengeText: row.challenge_text ?? undefined,
+    postedToHod: Boolean(row.posted_to_hod),
+    postedToCommunity: Boolean(row.posted_to_community),
+    communityPostId: row.community_post_id ?? undefined,
+    deliveredAt:
+      d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+  };
+}
+
+export function mapCommunityPost(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    authorRole: row.author_role,
+    departmentId: row.department_id ?? undefined,
+    subject: row.subject ?? undefined,
+    grade: row.grade ?? undefined,
+    title: row.title,
+    body: row.body,
+    teachingNoteId: row.teaching_note_id ?? undefined,
+    lessonPlanId: row.lesson_plan_id ?? undefined,
+    createdAt:
+      d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+  };
+}
+
+export function mapCommunityReply(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    postId: row.post_id,
+    parentReplyId: row.parent_reply_id ?? undefined,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    authorRole: row.author_role,
+    body: row.body,
+    createdAt:
+      d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+  };
+}
+
+export function mapStaffMessage(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    departmentId: row.department_id ?? undefined,
+    senderId: row.sender_id,
+    senderName: row.sender_name,
+    senderRole: row.sender_role,
+    body: row.body,
+    relatedDeliveryId: row.related_delivery_id ?? undefined,
+    relatedPostId: row.related_post_id ?? undefined,
+    read: Boolean(row.read),
+    createdAt:
+      d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+  };
+}
+
+/** Discord-style communities: department & school-wide channel chat. */
+export function mapCommunity(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    schoolId: row.school_id ?? null,
+    name: row.name,
+    description: row.description ?? '',
+    iconUrl: row.icon_url ?? null,
+    type: row.type,
+    departmentId: row.department_id ?? null,
+    createdBy: row.created_by ?? null,
+    createdAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    memberRole: row.member_role ?? undefined,
+    unreadCount: row.unread_count !== undefined ? Number(row.unread_count) : undefined,
+  };
+}
+
+export function mapCommunityMember(row: Record<string, unknown>) {
+  const d = row.joined_at;
+  return {
+    id: row.id,
+    communityId: row.community_id,
+    userId: row.user_id,
+    role: row.role,
+    joinedAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    displayName: row.display_name ?? undefined,
+    email: row.email ?? undefined,
+    userRole: row.user_role ?? undefined,
+  };
+}
+
+export function mapCommunityChannel(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    communityId: row.community_id,
+    name: row.name,
+    description: row.description ?? '',
+    type: row.type,
+    position: Number(row.position ?? 0),
+    createdAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    unreadCount: row.unread_count !== undefined ? Number(row.unread_count) : undefined,
+  };
+}
+
+export function mapCommunityThread(row: Record<string, unknown>, replyCount?: number) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    title: row.title ?? '',
+    createdBy: row.created_by ?? null,
+    rootMessageId: row.root_message_id ?? null,
+    isPinned: Boolean(row.is_pinned),
+    isArchived: Boolean(row.is_archived),
+    createdAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    replyCount,
+  };
+}
+
+export function mapCommunityMessage(
+  row: Record<string, unknown>,
+  reactions: { emoji: string; count: number; me: boolean }[] = []
+) {
+  const d = row.created_at;
+  const e = row.edited_at;
+  return {
+    id: row.id,
+    channelId: row.channel_id ?? null,
+    threadId: row.thread_id ?? null,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    authorRole: row.author_role ?? undefined,
+    content: row.content,
+    parentMessageId: row.parent_message_id ?? null,
+    createdAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    editedAt: e ? (e instanceof Date ? e.toISOString() : String(e)) : null,
+    reactions,
+    threadIdForRoot: row.thread_id_for_root ?? undefined,
+    threadReplyCount:
+      row.thread_reply_count !== undefined ? Number(row.thread_reply_count) : undefined,
+  };
+}
+
+export function mapMentionNotification(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    messageId: row.message_id,
+    isRead: Boolean(row.is_read),
+    createdAt: d instanceof Date ? d.toISOString() : String(d ?? new Date().toISOString()),
+    contentPreview: row.content ? String(row.content).slice(0, 140) : undefined,
+    authorName: row.author_name ?? undefined,
+    channelId: row.channel_id ?? null,
+    threadId: row.thread_id ?? null,
+    communityId: row.community_id ?? null,
   };
 }
