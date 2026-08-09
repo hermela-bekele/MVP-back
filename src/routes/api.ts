@@ -46,6 +46,10 @@ import { signAccessToken } from '../lib/tokens.js';
 import { writeAudit } from '../lib/audit.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { runBillingJobs } from '../services/jobs.js';
+import {
+  ensureCommunitiesSeeded,
+  ensureDefaultChannels,
+} from '../lib/communitySeed.js';
 
 const DEMO_TEACHER_ID = 'tch-1';
 
