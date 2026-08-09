@@ -9,6 +9,8 @@ ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS linked_student_id TEXT REFERENCES students(id);
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS linked_parent_id TEXT;
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+-- Allow clearing plaintext after hashing (login upgrades password -> password_hash)
+ALTER TABLE portal_users ALTER COLUMN password DROP NOT NULL;
 
 ALTER TABLE school_classes ADD COLUMN IF NOT EXISTS school_id TEXT REFERENCES schools(id);
 ALTER TABLE school_classes ADD COLUMN IF NOT EXISTS capacity INTEGER NOT NULL DEFAULT 40;

@@ -298,11 +298,17 @@ apiRouter.post(
     }
     // Migrate plaintext seed passwords to hash on successful login
     if (!user.password_hash && user.password) {
-      const hash = await bcrypt.hash(password, 10);
-      await query(
-        `UPDATE portal_users SET password_hash = $1, password = NULL WHERE id = $2`,
-        [hash, user.id]
-      );
+      try {
+        const hash = await bcrypt.hash(password, 10);
+        await query(
+          `UPDATE portal_users SET password_hash = $1, password = NULL WHERE id = $2`,
+          [hash, user.id]
+        );
+      } catch (err) {
+        // Schema may be behind (missing password_hash / NOT NULL on password).
+        // Login should still succeed; ensurePortalAuthSchema + migrate fix this permanently.
+        console.warn('[auth/login] password hash upgrade skipped:', err);
+      }
     }
     const withPerms = await attachPermissions({
       id: user.id,
