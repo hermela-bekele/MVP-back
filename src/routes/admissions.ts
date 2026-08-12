@@ -427,6 +427,7 @@ admissionsRouter.patch(
       'payment_providers',
       'branding',
       'required_documents',
+      'report_card_template',
     ] as const;
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -436,7 +437,8 @@ admissionsRouter.patch(
           key === 'application_form_schema' ||
             key === 'payment_providers' ||
             key === 'branding' ||
-            key === 'required_documents'
+            key === 'required_documents' ||
+            key === 'report_card_template'
             ? JSON.stringify(req.body[key])
             : req.body[key]
         );

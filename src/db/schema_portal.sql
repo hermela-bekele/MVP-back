@@ -406,3 +406,5 @@ CREATE TABLE IF NOT EXISTS reenrollment_invites (
   responded_at TIMESTAMPTZ,
   UNIQUE (campaign_id, student_id)
 );
+
+ALTER TABLE school_settings ADD COLUMN IF NOT EXISTS report_card_template JSONB NOT NULL DEFAULT '{}';

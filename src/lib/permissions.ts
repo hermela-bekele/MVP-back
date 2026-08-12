@@ -43,6 +43,7 @@ export const PERMISSIONS = [
   { code: 'permissions.grant', label: 'Grant permissions', module: 'admin' },
   { code: 'school.settings', label: 'School settings', module: 'admin' },
   { code: 'reports.view', label: 'View reports', module: 'admin' },
+  { code: 'reports.generate', label: 'Generate report cards / transcripts', module: 'academics' },
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number]['code'];
@@ -129,6 +130,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
   hr: ['portal.registrar', 'users.manage', 'reports.view'],
   'curriculum-head': ['materials.manage', 'calendar.manage', 'reports.view'],
   'department-head': ['grades.publish', 'materials.manage', 'reports.view'],
+  'vice-principal': ['reports.view', 'reports.generate', 'school.settings'],
 };
 
 import { query } from '../db/pool.js';
