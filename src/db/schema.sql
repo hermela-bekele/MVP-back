@@ -1,4 +1,4 @@
--- Prime Teaching System — PostgreSQL schema
+pr-- PRIME EduAI — PostgreSQL schema
 
 CREATE TABLE IF NOT EXISTS schools (
   id TEXT PRIMARY KEY,

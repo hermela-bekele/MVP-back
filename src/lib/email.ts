@@ -181,7 +181,7 @@ export function admissionAcceptedEmail(opts: {
     '',
     'A PDF copy of the invoice is attached. Pay in the parent portal before the deadline to confirm the seat.',
     '',
-    '— ' + (opts.schoolName || 'Prime Teaching System'),
+    '— ' + (opts.schoolName || 'PRIME EduAI'),
   ].join('\n');
 
   const bodyHtml = `
@@ -221,7 +221,7 @@ export function admissionRejectedEmail(opts: {
       '',
       'You may re-apply in a future intake window.',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
   };
 }
@@ -241,7 +241,7 @@ export function paymentDelayRejectionEmail(opts: {
       `The admission offer for ${opts.studentName}${opts.referenceCode ? ` (${opts.referenceCode})` : ''} at ${opts.schoolName} has expired due to unpaid fees${opts.dueDate ? ` (deadline ${opts.dueDate})` : ''}.`,
       'The reserved seat has been released.',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
   };
 }
@@ -270,7 +270,7 @@ export function invoiceReminderEmail(opts: {
         : `This is a reminder that invoice ${opts.invoiceNumber}${opts.studentName ? ` for ${opts.studentName}` : ''} — ${amt} ${opts.currency} — is due on ${opts.dueDate} (${opts.schoolName}).`,
       'A PDF copy is attached. Partial payments are accepted in the parent portal.',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
     bodyHtml: `
       <p>Dear ${opts.parentName},</p>
@@ -280,7 +280,7 @@ export function invoiceReminderEmail(opts: {
           : `Reminder: invoice <strong>${opts.invoiceNumber}</strong>${opts.studentName ? ` for <strong>${opts.studentName}</strong>` : ''} — <strong>${amt} ${opts.currency}</strong> — is due on <strong>${opts.dueDate}</strong>.`
       }</p>
       <p>A PDF copy is attached. Partial payments are accepted in the parent portal.</p>
-      <p>— ${opts.schoolName || 'Prime Teaching System'}</p>
+      <p>— ${opts.schoolName || 'PRIME EduAI'}</p>
     `,
   };
 }
@@ -306,7 +306,7 @@ export function invoiceIssuedEmail(opts: {
       '',
       'A PDF copy is attached. Pay in the parent portal (partial payments accepted).',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
     bodyHtml: `
       <p>Dear ${opts.parentName},</p>
@@ -338,7 +338,7 @@ export function infoRequestedEmail(opts: {
       '',
       'Please update the application in the parent portal.',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
   };
 }
@@ -362,7 +362,7 @@ export function paymentReceiptEmail(opts: {
         ? `Remaining balance: ${opts.balanceDue} ${opts.currency}.`
         : 'This invoice is now fully paid. Thank you.',
       '',
-      '— ' + (opts.schoolName || 'Prime Teaching System'),
+      '— ' + (opts.schoolName || 'PRIME EduAI'),
     ].join('\n'),
   };
 }

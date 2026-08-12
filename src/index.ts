@@ -58,7 +58,7 @@ async function start() {
   }, 15_000);
 
   server.listen(config.port, () => {
-    console.log(`Prime API listening on http://localhost:${config.port}`);
+    console.log(`PRIME EduAI API listening on http://localhost:${config.port}`);
   });
 }
 

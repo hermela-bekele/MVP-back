@@ -1,10 +1,10 @@
 {
-  "name": "prime-api",
+  "name": "prime-eduai-api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=500 tsx watch src/index.ts",
+    "dev": "cross-env CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=500 tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
     "db:migrate": "tsx src/db/migrate.ts",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/nodemailer": "^8.0.1",
+    "cross-env": "^7.0.3",
     "tsx": "^4.19.2"
   }
 }

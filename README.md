@@ -1,14 +1,14 @@
-# Prime API
+# PRIME EduAI API
 
-Express + PostgreSQL backend for the Prime Teaching System.
+Express + PostgreSQL backend for PRIME EduAI.
 
 ## Prerequisites
 
 - Node.js 20+
-- PostgreSQL with database **`Prime`** created:
+- PostgreSQL with database **`PRIME`** created:
 
 ```sql
-CREATE DATABASE "Prime";
+CREATE DATABASE "PRIME";
 ```
 
 ## Setup
@@ -32,7 +32,7 @@ API health check: [http://localhost:3004/api/health](http://localhost:3004/api/h
 | `PG_PASSWORD` | `password` |
 | `PG_HOST` | `localhost` |
 | `PG_PORT` | `5432` |
-| `PG_DATABASE` | `Prime` |
+| `PG_DATABASE` | `PRIME` |
 
 ## Scripts
 
