@@ -128,9 +128,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'feedback.view',
   ],
   hr: ['portal.registrar', 'users.manage', 'reports.view'],
-  'curriculum-head': ['materials.manage', 'calendar.manage', 'reports.view'],
   'department-head': ['grades.publish', 'materials.manage', 'reports.view'],
-  'vice-principal': ['reports.view', 'reports.generate', 'school.settings'],
+  'head-of-academics': ['materials.manage', 'calendar.manage', 'reports.view', 'reports.generate', 'school.settings'],
 };
 
 import { query } from '../db/pool.js';

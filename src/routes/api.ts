@@ -230,7 +230,7 @@ const PORTAL_ROLES = [
   'school-head',
   'registrar',
   'hr',
-  'curriculum-head',
+  'head-of-academics',
   'department-head',
   'teacher',
   'student',

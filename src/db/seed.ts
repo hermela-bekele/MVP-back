@@ -26,7 +26,7 @@ const PORTAL_USERS = [
   { id: 'usr-school', email: 'principal.semeneh@prime.edu.et', password: 'school123', role: 'school-head', displayName: 'School Head' },
   { id: 'usr-registrar', email: 'registrar.office@prime.edu.et', password: 'registrar123', role: 'registrar', displayName: 'Tigist Haile' },
   { id: 'usr-hr', email: 'hr.officer@prime.edu.et', password: 'hr123', role: 'hr', displayName: 'Sara Bekele' },
-  { id: 'usr-curr', email: 'curriculum.lead@prime.edu.et', password: 'curr123', role: 'curriculum-head', displayName: 'Curriculum Head' },
+  { id: 'usr-curr', email: 'curriculum.lead@prime.edu.et', password: 'curr123', role: 'head-of-academics', displayName: 'Head of Academics' },
   {
     id: 'usr-dept',
     email: 'dept.head.math@prime.edu.et',
@@ -557,7 +557,7 @@ async function seed() {
     if (opts.type === 'general') {
       const { rows: staff } = await query<{ id: string; role: string }>(
         `SELECT id, role FROM portal_users
-         WHERE school_id = $1 AND role IN ('teacher', 'department-head', 'school-head', 'curriculum-head')`,
+         WHERE school_id = $1 AND role IN ('teacher', 'department-head', 'school-head', 'head-of-academics')`,
         [schoolId]
       );
       for (const u of staff) {

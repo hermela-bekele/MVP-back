@@ -84,7 +84,7 @@ export function canCreateCommunity(user: AuthUser): boolean {
   return (
     user.role === 'school-head' ||
     user.role === 'moe' ||
-    user.role === 'curriculum-head' ||
+    user.role === 'head-of-academics' ||
     user.role === 'department-head'
   );
 }
@@ -183,7 +183,7 @@ export async function autoJoinDepartmentCommunities(user: AuthUser) {
   }
 
   // Always ensure general communities for school staff
-  if (user.schoolId && ['teacher', 'department-head', 'school-head', 'curriculum-head'].includes(user.role)) {
+  if (user.schoolId && ['teacher', 'department-head', 'school-head', 'head-of-academics'].includes(user.role)) {
     const { rows: generals } = await query(
       `SELECT id FROM communities WHERE type = 'general' AND school_id = $1`,
       [user.schoolId]

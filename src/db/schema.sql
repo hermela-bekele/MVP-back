@@ -1,4 +1,4 @@
-pr-- PRIME EduAI — PostgreSQL schema
+-- PRIME EduAI — PostgreSQL schema
 
 CREATE TABLE IF NOT EXISTS schools (
   id TEXT PRIMARY KEY,
