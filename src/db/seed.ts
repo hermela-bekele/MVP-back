@@ -588,12 +588,14 @@ async function seed() {
     // Welcome message in #general
     const welcomeId = `${opts.id}-msg-welcome`;
     await query(
-      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, content)
-       VALUES ($1,$2,NULL,$3,$4)`,
+      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, author_name, author_role, content)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6)`,
       [
         welcomeId,
         `${opts.id}-ch-gen`,
         ownerId,
+        'School Head',
+        'school-head',
         `Welcome to **${opts.name}**! Use channels for topic-focused chat, and start threads so side discussions stay organized.`,
       ]
     );
