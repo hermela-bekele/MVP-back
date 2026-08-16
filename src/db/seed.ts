@@ -47,6 +47,8 @@ const PORTAL_USERS = [
   },
   { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa', subject: 'Mathematics', departmentId: 'dept-math' },
   { id: 'usr-teacher-math', email: 'abebe.kebede@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Abebe Kebede' },
+  { id: 'usr-teacher-english', email: 'sarah.thompson@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Sarah Thompson', subject: 'English Language', departmentId: 'dept-eng' },
+  { id: 'usr-teacher-intl', email: 'james.anderson@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'James Anderson', subject: 'Mathematics (IGCSE)', departmentId: 'dept-math' },
   { id: 'usr-student', email: 'selam.abebe@std.edu.et', password: 'student123', role: 'student', displayName: 'Selam Abebe' },
   { id: 'usr-parent', email: 'abebe.demeke@gmail.com', password: 'parent123', role: 'parent', displayName: 'Abebe Demeke' },
   { id: 'usr-finance', email: 'finance.office@prime.edu.et', password: 'finance123', role: 'finance', displayName: 'Finance Officer' },
