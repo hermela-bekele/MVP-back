@@ -92,6 +92,13 @@ export function mapStudent(row: Record<string, unknown>) {
     attendanceRate: Number(row.attendance_rate),
     medicalInfo: row.medical_info ?? undefined,
     emergencyContact: row.emergency_contact,
+    dateOfBirth: row.date_of_birth
+      ? (row.date_of_birth instanceof Date
+          ? row.date_of_birth.toISOString().split('T')[0]
+          : String(row.date_of_birth))
+      : undefined,
+    academicYear: row.academic_year ?? undefined,
+    promotedAt: row.promoted_at ?? undefined,
   };
 }
 
@@ -538,6 +545,159 @@ export function mapCommunityMessage(
     threadIdForRoot: row.thread_id_for_root ?? undefined,
     threadReplyCount:
       row.thread_reply_count !== undefined ? Number(row.thread_reply_count) : undefined,
+  };
+}
+
+export function mapHrEmployee(row: Record<string, unknown>) {
+  const hire = row.hire_date;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    position: row.position,
+    department: row.department,
+    employmentType: row.employment_type,
+    hireDate: hire instanceof Date ? hire.toISOString().split('T')[0] : String(hire),
+    salary: Number(row.salary),
+    status: row.status,
+    schoolId: row.school_id,
+    manager: row.manager ?? undefined,
+    emergencyContact: row.emergency_contact ?? undefined,
+    teacherId: row.teacher_id ?? undefined,
+  };
+}
+
+export function mapLeaveRequest(row: Record<string, unknown>) {
+  const start = row.start_date;
+  const end = row.end_date;
+  const submitted = row.submitted_at;
+  const reviewed = row.reviewed_at;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    type: row.type,
+    startDate: start instanceof Date ? start.toISOString().split('T')[0] : String(start),
+    endDate: end instanceof Date ? end.toISOString().split('T')[0] : String(end),
+    days: Number(row.days),
+    reason: row.reason,
+    status: row.status,
+    submittedAt: submitted instanceof Date ? submitted.toISOString().split('T')[0] : String(submitted),
+    reviewedAt: reviewed
+      ? reviewed instanceof Date
+        ? reviewed.toISOString().split('T')[0]
+        : String(reviewed)
+      : undefined,
+    reviewerNotes: row.reviewer_notes ?? undefined,
+  };
+}
+
+export function mapPayrollRecord(row: Record<string, unknown>) {
+  const processed = row.processed_at;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    month: row.month,
+    baseSalary: Number(row.base_salary),
+    allowances: Number(row.allowances),
+    deductions: Number(row.deductions),
+    netPay: Number(row.net_pay),
+    status: row.status,
+    processedAt: processed
+      ? processed instanceof Date
+        ? processed.toISOString().split('T')[0]
+        : String(processed)
+      : undefined,
+  };
+}
+
+export function mapJobPosting(row: Record<string, unknown>) {
+  const posted = row.posted_at;
+  const closing = row.closing_date;
+  return {
+    id: row.id,
+    title: row.title,
+    department: row.department,
+    employmentType: row.employment_type,
+    salaryRange: row.salary_range,
+    description: row.description,
+    requirements: row.requirements ?? [],
+    status: row.status,
+    postedAt: posted instanceof Date ? posted.toISOString().split('T')[0] : String(posted),
+    closingDate: closing
+      ? closing instanceof Date
+        ? closing.toISOString().split('T')[0]
+        : String(closing)
+      : undefined,
+    applicantCount: Number(row.applicant_count ?? 0),
+  };
+}
+
+export function mapJobApplication(row: Record<string, unknown>) {
+  const applied = row.applied_at;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    jobTitle: row.job_title,
+    applicantName: row.applicant_name,
+    email: row.email,
+    phone: row.phone,
+    experience: row.experience,
+    education: row.education,
+    status: row.status,
+    appliedAt: applied instanceof Date ? applied.toISOString().split('T')[0] : String(applied),
+    notes: row.notes ?? undefined,
+  };
+}
+
+export function mapPerformanceReview(row: Record<string, unknown>) {
+  const completed = row.completed_at;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    period: row.period,
+    rating: Number(row.rating),
+    goals: row.goals ?? [],
+    strengths: row.strengths,
+    improvements: row.improvements,
+    status: row.status,
+    reviewerName: row.reviewer_name,
+    completedAt: completed
+      ? completed instanceof Date
+        ? completed.toISOString().split('T')[0]
+        : String(completed)
+      : undefined,
+  };
+}
+
+export function mapOnboardingTask(row: Record<string, unknown>) {
+  const due = row.due_date;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    task: row.task,
+    assignee: row.assignee,
+    dueDate: due instanceof Date ? due.toISOString().split('T')[0] : String(due),
+    completed: Boolean(row.completed),
+  };
+}
+
+export function mapStaffAttendanceRecord(row: Record<string, unknown>) {
+  const d = row.date;
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    date: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
+    checkIn: row.check_in ?? undefined,
+    checkOut: row.check_out ?? undefined,
+    status: row.status,
+    notes: row.notes ?? undefined,
   };
 }
 

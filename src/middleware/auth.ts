@@ -72,6 +72,17 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     .catch(next);
 }
 
+/** Attaches req.user if a valid session is present, but never rejects. For routes that
+ * predate the auth middleware convention and can't yet require a session on every caller. */
+export function optionalAuth(req: Request, res: Response, next: NextFunction) {
+  resolveUserFromHeader(req)
+    .then((user) => {
+      if (user) req.user = user;
+      next();
+    })
+    .catch(() => next());
+}
+
 export function requirePermission(...codes: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const run = async () => {

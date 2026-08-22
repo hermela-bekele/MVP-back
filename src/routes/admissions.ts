@@ -16,9 +16,17 @@ import {
   withdrawApplication,
   forcePromoteWaitlist,
 } from '../services/admissions.js';
+import {
+  listRegistrationFormTemplates,
+  getRegistrationFormTemplateById,
+  getRegistrationFormTemplateByCode,
+  createRegistrationFormTemplate,
+  updateRegistrationFormTemplate,
+} from '../services/registrationForms.js';
 import { newId } from '../lib/ids.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { enforceSchoolScope } from '../middleware/auth.js';
+import { writeAudit } from '../lib/audit.js';
 
 export const admissionsRouter = Router();
 
@@ -127,6 +135,161 @@ admissionsRouter.post(
     } catch (err) {
       httpError(err, res);
     }
+  })
+);
+
+// Public: registrar-configured registration form meta (by short code)
+admissionsRouter.get(
+  '/public/forms/:code',
+  asyncHandler(async (req, res) => {
+    const template = await getRegistrationFormTemplateByCode(paramId(req, 'code'));
+    if (!template) {
+      res.status(404).json({ error: 'Registration form not found or no longer active' });
+      return;
+    }
+    const { rows } = await query(
+      `SELECT id, name, code, slug, region, type, email, phone FROM schools WHERE id = $1 AND status = 'Active'`,
+      [template.schoolId]
+    );
+    if (!rows[0]) {
+      res.status(404).json({ error: 'School not found' });
+      return;
+    }
+    const settings = await getSchoolSettings(template.schoolId);
+    res.json({
+      school: rows[0],
+      formName: template.name,
+      formDescription: template.description,
+      formSchema: template.fields,
+      requiredDocuments: template.requiredDocuments,
+      branding: settings.branding ?? {},
+    });
+  })
+);
+
+// Public / parent: submit application via a registrar-configured registration form
+admissionsRouter.post(
+  '/public/forms/:code/applications',
+  rateLimit({ windowMs: 60_000, max: 8 }),
+  asyncHandler(async (req, res) => {
+    if (req.body.website || req.body.companyUrl) {
+      res.status(201).json({ referenceCode: 'APP-OK', id: 'ignored' });
+      return;
+    }
+    const template = await getRegistrationFormTemplateByCode(paramId(req, 'code'));
+    if (!template) {
+      res.status(404).json({ error: 'Registration form not found or no longer active' });
+      return;
+    }
+    const user = await resolveUserFromHeader(req);
+    try {
+      const app = await createApplication({
+        schoolId: template.schoolId,
+        parentUserId: user?.id,
+        applicantName: req.body.applicantName,
+        dateOfBirth: req.body.dateOfBirth,
+        gradeApplied: req.body.gradeApplied,
+        sectionRequested: req.body.sectionRequested,
+        parentName: req.body.parentName,
+        parentPhone: req.body.parentPhone,
+        parentEmail: req.body.parentEmail,
+        emergencyContact: req.body.emergencyContact,
+        medicalInfo: req.body.medicalInfo,
+        previousSchool: req.body.previousSchool,
+        sourceChannel: req.body.sourceChannel || 'registration_form',
+        formData: req.body.formData,
+        submit: req.body.submit !== false,
+        consentAccepted: req.body.consentAccepted !== false,
+        formTemplateId: template.id,
+      });
+      res.status(201).json(app);
+    } catch (err) {
+      httpError(err, res);
+    }
+  })
+);
+
+// Registrar: manage registration form templates (configurable fields + required documents per form)
+admissionsRouter.get(
+  '/registration-forms',
+  requireAuth,
+  requirePermission('admissions.configure_form'),
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const schoolId = (req.query.schoolId as string) || req.user!.schoolId;
+    if (!schoolId) {
+      res.status(400).json({ error: 'schoolId required' });
+      return;
+    }
+    res.json(await listRegistrationFormTemplates(schoolId));
+  })
+);
+
+admissionsRouter.post(
+  '/registration-forms',
+  requireAuth,
+  requirePermission('admissions.configure_form'),
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const schoolId = (req.body.schoolId as string) || req.user!.schoolId;
+    if (!schoolId) {
+      res.status(400).json({ error: 'schoolId required' });
+      return;
+    }
+    try {
+      const template = await createRegistrationFormTemplate({
+        schoolId,
+        name: req.body.name,
+        description: req.body.description,
+        fields: Array.isArray(req.body.fields) ? req.body.fields : [],
+        requiredDocuments: Array.isArray(req.body.requiredDocuments) ? req.body.requiredDocuments : [],
+        createdBy: req.user!.id,
+      });
+      await writeAudit({
+        schoolId,
+        actorUserId: req.user!.id,
+        action: 'registration_form.create',
+        entityType: 'registration_form_template',
+        entityId: template!.id,
+        metadata: { name: template!.name },
+      });
+      res.status(201).json(template);
+    } catch (err) {
+      httpError(err, res);
+    }
+  })
+);
+
+admissionsRouter.patch(
+  '/registration-forms/:id',
+  requireAuth,
+  requirePermission('admissions.configure_form'),
+  asyncHandler(async (req, res) => {
+    const existing = await getRegistrationFormTemplateById(paramId(req));
+    if (!existing) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    if (existing.schoolId !== req.user!.schoolId && req.user!.role !== 'moe') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const template = await updateRegistrationFormTemplate(paramId(req), {
+      name: req.body.name,
+      description: req.body.description,
+      fields: Array.isArray(req.body.fields) ? req.body.fields : undefined,
+      requiredDocuments: Array.isArray(req.body.requiredDocuments) ? req.body.requiredDocuments : undefined,
+      active: typeof req.body.active === 'boolean' ? req.body.active : undefined,
+    });
+    await writeAudit({
+      schoolId: existing.schoolId,
+      actorUserId: req.user!.id,
+      action: 'registration_form.update',
+      entityType: 'registration_form_template',
+      entityId: paramId(req),
+      metadata: { name: template!.name },
+    });
+    res.json(template);
   })
 );
 

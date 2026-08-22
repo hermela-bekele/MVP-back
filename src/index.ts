@@ -3,7 +3,7 @@ import cors from 'cors';
 import http from 'http';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
-import { ensurePortalAuthSchema } from './db/ensureSchema.js';
+import { ensurePortalAuthSchema, ensureRegistrationFormsSchema } from './db/ensureSchema.js';
 import { apiRouter } from './routes/api.js';
 import { uploadsDir } from './lib/uploads.js';
 import { runBillingJobs } from './services/jobs.js';
@@ -33,6 +33,7 @@ async function start() {
     await pool.query('SELECT 1');
     console.log('PostgreSQL connected.');
     await ensurePortalAuthSchema();
+    await ensureRegistrationFormsSchema();
     console.log('Portal auth schema verified.');
   } catch (err) {
     console.error('PostgreSQL connection failed:', err);

@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS students (
   emergency_contact TEXT NOT NULL
 );
 
+ALTER TABLE students ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS academic_year TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS school_classes (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

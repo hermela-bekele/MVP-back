@@ -41,11 +41,14 @@ import { billingRouter } from './billing.js';
 import { permissionsRouter } from './permissions.js';
 import { portalRouter } from './portal.js';
 import { communityRouter } from './community.js';
-import { attachPermissions } from '../middleware/auth.js';
+import { registrarRouter } from './registrar.js';
+import { hrRouter } from './hr.js';
+import { attachPermissions, optionalAuth } from '../middleware/auth.js';
 import { signAccessToken } from '../lib/tokens.js';
 import { writeAudit } from '../lib/audit.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { runBillingJobs } from '../services/jobs.js';
+import { currentAcademicYear } from '../lib/academicYear.js';
 import {
   ensureCommunitiesSeeded,
   ensureDefaultChannels,
@@ -59,6 +62,8 @@ apiRouter.use('/admissions', admissionsRouter);
 apiRouter.use('/billing', billingRouter);
 apiRouter.use('/permissions', permissionsRouter);
 apiRouter.use('/portal', portalRouter);
+apiRouter.use('/registrar', registrarRouter);
+apiRouter.use('/hr', hrRouter);
 apiRouter.use(communityRouter);
 
 apiRouter.post('/jobs/billing', async (_req, res, next) => {
@@ -539,23 +544,34 @@ apiRouter.patch(
 // Students
 apiRouter.post(
   '/students',
+  optionalAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
     const { rows: cnt } = await query('SELECT COUNT(*)::int AS c FROM students');
     const id = `std-${Number(cnt[0].c) + 1}`;
     const studentId = `PTS/${Math.floor(1000 + Math.random() * 9000)}/18`;
+    const academicYear = currentAcademicYear();
     await query(
-      `INSERT INTO students (id, student_id, name, email, grade, section, school_id, parent_name, parent_phone, parent_email, status, gpa, attendance_rate, medical_info, emergency_contact)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Active',0,100,$11,$12)`,
-      [id, studentId, b.name, b.email ?? null, b.grade, b.section, b.schoolId, b.parentName, b.parentPhone, b.parentEmail, b.medicalInfo ?? null, b.emergencyContact]
+      `INSERT INTO students (id, student_id, name, email, grade, section, school_id, parent_name, parent_phone, parent_email, status, gpa, attendance_rate, medical_info, emergency_contact, date_of_birth, academic_year)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Active',0,100,$11,$12,$13,$14)`,
+      [id, studentId, b.name, b.email ?? null, b.grade, b.section, b.schoolId, b.parentName, b.parentPhone, b.parentEmail, b.medicalInfo ?? null, b.emergencyContact, b.dateOfBirth ?? null, academicYear]
     );
     const { rows } = await query('SELECT * FROM students WHERE id = $1', [id]);
+    await writeAudit({
+      schoolId: b.schoolId ?? null,
+      actorUserId: req.user?.id ?? null,
+      action: 'student.create',
+      entityType: 'student',
+      entityId: id,
+      metadata: { name: b.name, grade: b.grade, section: b.section },
+    });
     res.status(201).json(mapStudent(rows[0]));
   })
 );
 
 apiRouter.patch(
   '/students/:id',
+  optionalAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
     // Status changes with optional tuition proration go through transfers service
@@ -566,7 +582,7 @@ apiRouter.patch(
         status: b.status,
         notes: b.notes,
         applyProration: b.applyProration,
-        actorUserId: (req as { user?: { id?: string } }).user?.id,
+        actorUserId: req.user?.id,
       });
       const { mapStudent } = await import('../lib/serialize.js');
       res.json({
@@ -590,6 +606,7 @@ apiRouter.patch(
       attendanceRate: 'attendance_rate',
       medicalInfo: 'medical_info',
       emergencyContact: 'emergency_contact',
+      dateOfBirth: 'date_of_birth',
     };
     for (const [k, col] of Object.entries(fieldMap)) {
       if (b[k] !== undefined) cols.push([col, b[k]]);
@@ -603,6 +620,14 @@ apiRouter.patch(
     vals.push(req.params.id);
     await query(`UPDATE students SET ${sets} WHERE id = $${cols.length + 1}`, vals);
     const { rows } = await query('SELECT * FROM students WHERE id = $1', [req.params.id]);
+    await writeAudit({
+      schoolId: (rows[0]?.school_id as string | undefined) ?? null,
+      actorUserId: req.user?.id ?? null,
+      action: 'student.update',
+      entityType: 'student',
+      entityId: String(req.params.id),
+      metadata: { changed: cols.map(([c]) => c) },
+    });
     res.json(mapStudent(rows[0]));
   })
 );

@@ -20,6 +20,16 @@ import {
   mockParentMessages,
   mockTeacherCheckInPrompts,
 } from '../lib/mockData.js';
+import {
+  mockHrEmployees,
+  mockLeaveRequests,
+  mockPayrollRecords,
+  mockJobPostings,
+  mockJobApplications,
+  mockPerformanceReviews,
+  mockOnboardingTasks,
+  mockStaffAttendance,
+} from '../lib/hrPortal.js';
 
 const PORTAL_USERS = [
   { id: 'usr-moe', email: 'moe.admin@prime.gov.et', password: 'moe123', role: 'moe', displayName: 'MOE Admin' },
@@ -61,6 +71,8 @@ const INITIAL_NOTIFICATIONS = [
 async function truncateAll() {
   await pool.query(`
     TRUNCATE TABLE
+      staff_attendance, onboarding_tasks, performance_reviews,
+      job_applications, job_postings, payroll_records, leave_requests, hr_employees,
       community_thread_reads, community_channel_reads,
       community_mention_notifications, community_reactions,
       community_messages, community_threads, community_channels,
@@ -116,6 +128,70 @@ async function seed() {
       `INSERT INTO students (id, student_id, name, email, grade, section, school_id, parent_name, parent_phone, parent_email, status, gpa, attendance_rate, medical_info, emergency_contact)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [s.id, s.studentId, s.name, s.email ?? null, s.grade, s.section, s.schoolId, s.parentName, s.parentPhone, s.parentEmail, s.status, s.gpa, s.attendanceRate, s.medicalInfo ?? null, s.emergencyContact]
+    );
+  }
+
+  for (const e of mockHrEmployees) {
+    await query(
+      `INSERT INTO hr_employees (id, employee_id, name, email, phone, position, department, employment_type, hire_date, salary, status, school_id, manager, emergency_contact, teacher_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [e.id, e.employeeId, e.name, e.email, e.phone, e.position, e.department, e.employmentType, e.hireDate, e.salary, e.status, e.schoolId, e.manager ?? null, e.emergencyContact ?? null, e.teacherId ?? null]
+    );
+  }
+
+  for (const l of mockLeaveRequests) {
+    await query(
+      `INSERT INTO leave_requests (id, employee_id, employee_name, type, start_date, end_date, days, reason, status, school_id, submitted_at, reviewed_at, reviewer_notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [l.id, l.employeeId, l.employeeName, l.type, l.startDate, l.endDate, l.days, l.reason, l.status, 'sch-1', l.submittedAt, l.reviewedAt ?? null, l.reviewerNotes ?? null]
+    );
+  }
+
+  for (const p of mockPayrollRecords) {
+    await query(
+      `INSERT INTO payroll_records (id, employee_id, employee_name, month, base_salary, allowances, deductions, net_pay, status, school_id, processed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [p.id, p.employeeId, p.employeeName, p.month, p.baseSalary, p.allowances, p.deductions, p.netPay, p.status, 'sch-1', p.processedAt ?? null]
+    );
+  }
+
+  for (const j of mockJobPostings) {
+    await query(
+      `INSERT INTO job_postings (id, title, department, employment_type, salary_range, description, requirements, status, school_id, posted_at, closing_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [j.id, j.title, j.department, j.employmentType, j.salaryRange, j.description, JSON.stringify(j.requirements), j.status, 'sch-1', j.postedAt, j.closingDate ?? null]
+    );
+  }
+
+  for (const a of mockJobApplications) {
+    await query(
+      `INSERT INTO job_applications (id, job_id, job_title, applicant_name, email, phone, experience, education, status, school_id, applied_at, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [a.id, a.jobId, a.jobTitle, a.applicantName, a.email, a.phone, a.experience, a.education, a.status, 'sch-1', a.appliedAt, a.notes ?? null]
+    );
+  }
+
+  for (const r of mockPerformanceReviews) {
+    await query(
+      `INSERT INTO performance_reviews (id, employee_id, employee_name, period, rating, goals, strengths, improvements, status, reviewer_name, school_id, completed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [r.id, r.employeeId, r.employeeName, r.period, r.rating, JSON.stringify(r.goals), r.strengths, r.improvements, r.status, r.reviewerName, 'sch-1', r.completedAt ?? null]
+    );
+  }
+
+  for (const t of mockOnboardingTasks) {
+    await query(
+      `INSERT INTO onboarding_tasks (id, employee_id, employee_name, task, assignee, due_date, completed, school_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [t.id, t.employeeId, t.employeeName, t.task, t.assignee, t.dueDate, t.completed, 'sch-1']
+    );
+  }
+
+  for (const a of mockStaffAttendance) {
+    await query(
+      `INSERT INTO staff_attendance (id, employee_id, employee_name, date, check_in, check_out, status, notes, school_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [a.id, a.employeeId, a.employeeName, a.date, a.checkIn ?? null, a.checkOut ?? null, a.status, a.notes ?? null, 'sch-1']
     );
   }
 

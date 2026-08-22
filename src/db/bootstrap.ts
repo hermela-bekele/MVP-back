@@ -26,6 +26,14 @@ import {
   mapStaffMessage,
   mapTeacherSelfAssessment,
   mapTeacherTrainingAssignment,
+  mapHrEmployee,
+  mapLeaveRequest,
+  mapPayrollRecord,
+  mapJobPosting,
+  mapJobApplication,
+  mapPerformanceReview,
+  mapOnboardingTask,
+  mapStaffAttendanceRecord,
 } from '../lib/serialize.js';
 
 export async function loadBootstrap() {
@@ -56,6 +64,14 @@ export async function loadBootstrap() {
     staffMessages,
     teacherSelfAssessments,
     teacherTrainingAssignments,
+    hrEmployees,
+    leaveRequests,
+    payrollRecords,
+    jobPostings,
+    jobApplications,
+    performanceReviews,
+    onboardingTasks,
+    staffAttendance,
   ] = await Promise.all([
     query('SELECT * FROM schools ORDER BY name'),
     query('SELECT * FROM departments ORDER BY name'),
@@ -83,6 +99,21 @@ export async function loadBootstrap() {
     query('SELECT * FROM staff_messages ORDER BY created_at ASC').catch(() => ({ rows: [] })),
     query('SELECT * FROM teacher_self_assessments ORDER BY submitted_at DESC').catch(() => ({ rows: [] })),
     query('SELECT * FROM teacher_training_assignments ORDER BY created_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM hr_employees ORDER BY name').catch(() => ({ rows: [] })),
+    query('SELECT * FROM leave_requests ORDER BY submitted_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM payroll_records ORDER BY month DESC').catch(() => ({ rows: [] })),
+    query(
+      `SELECT jp.*, COALESCE(ja.applicant_count, 0) AS applicant_count
+       FROM job_postings jp
+       LEFT JOIN (
+         SELECT job_id, COUNT(*)::int AS applicant_count FROM job_applications GROUP BY job_id
+       ) ja ON ja.job_id = jp.id
+       ORDER BY jp.posted_at DESC`
+    ).catch(() => ({ rows: [] })),
+    query('SELECT * FROM job_applications ORDER BY applied_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM performance_reviews ORDER BY created_at DESC').catch(() => ({ rows: [] })),
+    query('SELECT * FROM onboarding_tasks ORDER BY due_date').catch(() => ({ rows: [] })),
+    query('SELECT * FROM staff_attendance ORDER BY date DESC').catch(() => ({ rows: [] })),
   ]);
 
   return {
@@ -112,5 +143,13 @@ export async function loadBootstrap() {
     staffMessages: staffMessages.rows.map(mapStaffMessage),
     teacherSelfAssessments: teacherSelfAssessments.rows.map(mapTeacherSelfAssessment),
     teacherTrainingAssignments: teacherTrainingAssignments.rows.map(mapTeacherTrainingAssignment),
+    hrEmployees: hrEmployees.rows.map(mapHrEmployee),
+    leaveRequests: leaveRequests.rows.map(mapLeaveRequest),
+    payrollRecords: payrollRecords.rows.map(mapPayrollRecord),
+    jobPostings: jobPostings.rows.map(mapJobPosting),
+    jobApplications: jobApplications.rows.map(mapJobApplication),
+    performanceReviews: performanceReviews.rows.map(mapPerformanceReview),
+    onboardingTasks: onboardingTasks.rows.map(mapOnboardingTask),
+    staffAttendance: staffAttendance.rows.map(mapStaffAttendanceRecord),
   };
 }

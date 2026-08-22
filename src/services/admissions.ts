@@ -56,6 +56,7 @@ export function mapApplication(row: Record<string, unknown>) {
     invoiceId: row.invoice_id,
     editLocked: row.edit_locked,
     reapplyOf: row.reapply_of,
+    formTemplateId: row.form_template_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     waitlistRank: row.waitlist_rank != null ? Number(row.waitlist_rank) : null,
@@ -159,6 +160,7 @@ export async function createApplication(input: {
   reapplyOf?: string | null;
   forceBackWaitlist?: boolean;
   consentAccepted?: boolean;
+  formTemplateId?: string | null;
 }) {
   if (input.submit && input.consentAccepted === false) {
     throw Object.assign(new Error('You must accept the privacy consent to apply'), { status: 400 });
@@ -219,8 +221,8 @@ export async function createApplication(input: {
     `INSERT INTO admission_applications (
       id, school_id, reference_code, parent_user_id, parent_id, applicant_name, date_of_birth,
       grade_applied, section_requested, parent_name, parent_phone, parent_email, emergency_contact,
-      medical_info, previous_school, source_channel, form_data, status, submitted_at, reapply_of
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      medical_info, previous_school, source_channel, form_data, status, submitted_at, reapply_of, form_template_id
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
     [
       id,
       input.schoolId,
@@ -242,6 +244,7 @@ export async function createApplication(input: {
       status,
       input.submit ? new Date().toISOString() : null,
       input.reapplyOf ?? null,
+      input.formTemplateId ?? null,
     ]
   );
 
@@ -485,9 +488,19 @@ export async function acceptApplication(applicationId: string, opts: {
       await client.query('SELECT * FROM school_settings WHERE school_id = $1', [app.school_id])
     ).rows[0];
 
-    const requiredDocs: string[] = Array.isArray(settings?.required_documents)
+    let requiredDocs: string[] = Array.isArray(settings?.required_documents)
       ? settings.required_documents
       : [];
+    if (app.form_template_id) {
+      const tmpl = (
+        await client.query('SELECT required_documents FROM registration_form_templates WHERE id = $1', [
+          app.form_template_id,
+        ])
+      ).rows[0];
+      if (tmpl && Array.isArray(tmpl.required_documents)) {
+        requiredDocs = tmpl.required_documents;
+      }
+    }
     if (requiredDocs.length) {
       const docs = await client.query(
         `SELECT doc_type, verified FROM admission_documents WHERE application_id = $1`,

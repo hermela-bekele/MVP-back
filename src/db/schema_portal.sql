@@ -90,6 +90,20 @@ ALTER TABLE portal_users DROP CONSTRAINT IF EXISTS portal_users_linked_parent_id
 ALTER TABLE portal_users ADD CONSTRAINT portal_users_linked_parent_id_fkey
   FOREIGN KEY (linked_parent_id) REFERENCES parents(id);
 
+CREATE TABLE IF NOT EXISTS registration_form_templates (
+  id TEXT PRIMARY KEY,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  code TEXT NOT NULL UNIQUE,
+  fields JSONB NOT NULL DEFAULT '[]',
+  required_documents JSONB NOT NULL DEFAULT '[]',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by TEXT REFERENCES portal_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS admission_applications (
   id TEXT PRIMARY KEY,
   school_id TEXT NOT NULL REFERENCES schools(id),
@@ -120,6 +134,7 @@ CREATE TABLE IF NOT EXISTS admission_applications (
   invoice_id TEXT,
   edit_locked BOOLEAN NOT NULL DEFAULT FALSE,
   reapply_of TEXT REFERENCES admission_applications(id),
+  form_template_id TEXT REFERENCES registration_form_templates(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (school_id, reference_code)
@@ -174,6 +189,8 @@ CREATE TABLE IF NOT EXISTS enrollments (
   withdrawn_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS academic_year TEXT;
 
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
