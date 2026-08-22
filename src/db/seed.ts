@@ -57,6 +57,8 @@ const PORTAL_USERS = [
   },
   { id: 'usr-teacher', email: 'martha.feyissa@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Martha Feyissa', subject: 'Mathematics', departmentId: 'dept-math' },
   { id: 'usr-teacher-math', email: 'abebe.kebede@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Abebe Kebede' },
+  { id: 'usr-teacher-english', email: 'sarah.thompson@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'Sarah Thompson', subject: 'English Language', departmentId: 'dept-eng' },
+  { id: 'usr-teacher-intl', email: 'james.anderson@prime.edu.et', password: 'teacher123', role: 'teacher', displayName: 'James Anderson', subject: 'Mathematics (IGCSE)', departmentId: 'dept-math' },
   { id: 'usr-student', email: 'selam.abebe@std.edu.et', password: 'student123', role: 'student', displayName: 'Selam Abebe' },
   { id: 'usr-parent', email: 'abebe.demeke@gmail.com', password: 'parent123', role: 'parent', displayName: 'Abebe Demeke' },
   { id: 'usr-finance', email: 'finance.office@prime.edu.et', password: 'finance123', role: 'finance', displayName: 'Finance Officer' },
@@ -664,12 +666,14 @@ async function seed() {
     // Welcome message in #general
     const welcomeId = `${opts.id}-msg-welcome`;
     await query(
-      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, content)
-       VALUES ($1,$2,NULL,$3,$4)`,
+      `INSERT INTO community_messages (id, channel_id, thread_id, author_id, author_name, author_role, content)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6)`,
       [
         welcomeId,
         `${opts.id}-ch-gen`,
         ownerId,
+        'School Head',
+        'school-head',
         `Welcome to **${opts.name}**! Use channels for topic-focused chat, and start threads so side discussions stay organized.`,
       ]
     );

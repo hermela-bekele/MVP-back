@@ -1522,7 +1522,9 @@ apiRouter.post(
     if (noteStatus !== 'Approved') {
       // Soft path: classroom delivery implies the note was taught — promote to Approved
       // so HoD exam topics and delivery lists stay consistent.
-      if (['Draft', 'Saved', 'Pending Dept Head'].includes(noteStatus)) {
+      // Teaching notes no longer need HOD approval to be marked as delivered
+      // Auto-approve if not already approved
+      if (noteStatus !== 'Approved') {
         await query(
           `UPDATE teaching_notes
            SET status = 'Approved',
@@ -1532,11 +1534,6 @@ apiRouter.post(
           [note.id],
         );
         note.status = 'Approved';
-      } else {
-        res.status(400).json({
-          error: 'Only approved teaching notes can be marked delivered. Wait for department head approval first.',
-        });
-        return;
       }
     }
 
