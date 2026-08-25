@@ -1,25 +1,54 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import http from 'http';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { ensurePortalAuthSchema, ensureRegistrationFormsSchema } from './db/ensureSchema.js';
 import { apiRouter } from './routes/api.js';
 import { uploadsDir } from './lib/uploads.js';
-import { runBillingJobs } from './services/jobs.js';
 import { initCommunityRealtime } from './lib/communityRealtime.js';
 
 const app = express();
 const server = http.createServer(app);
 
+// CORS_ORIGINS is a comma-separated allowlist (e.g. "https://app.example.com,https://www.example.com").
+// In production it must be set explicitly — no wildcard fallback. In dev it defaults to common localhost ports.
+const configuredOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (config.nodeEnv === 'production' && configuredOrigins.length === 0) {
+  throw new Error('CORS_ORIGINS must be set in production (comma-separated list of allowed origins).');
+}
+
+const allowedOrigins =
+  configuredOrigins.length > 0
+    ? configuredOrigins
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+app.use(helmet());
 app.use(
   cors({
-    origin: true,
+    origin(origin, callback) {
+      // Allow non-browser requests (no Origin header, e.g. server-to-server, curl).
+      callback(null, !origin || allowedOrigins.includes(origin));
+    },
     credentials: true,
   })
 );
 app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(uploadsDir));
+
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.status(200).json({ status: 'ok' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', error: (err as Error).message });
+  }
+});
 
 app.use('/api', apiRouter);
 
@@ -47,16 +76,10 @@ async function start() {
 
   initCommunityRealtime(server);
 
-  // Billing automation: reminders, unpaid admission expiry, late fees, monthly invoices
-  const JOB_MS = 60 * 60 * 1000;
-  setInterval(() => {
-    runBillingJobs()
-      .then((r) => console.log('[billing-jobs]', r))
-      .catch((err) => console.error('[billing-jobs] failed', err));
-  }, JOB_MS);
-  setTimeout(() => {
-    runBillingJobs().catch((err) => console.error('[billing-jobs] startup failed', err));
-  }, 15_000);
+  // Billing automation (reminders, unpaid admission expiry, late fees, monthly invoices)
+  // no longer runs in-process: an in-process interval would duplicate itself once this
+  // service scales beyond one instance. Run it via `npm run jobs:billing` on a schedule
+  // instead (Render Cron Jobs, or any external scheduler) — see src/scripts/runBillingJobs.ts.
 
   server.listen(config.port, () => {
     console.log(`PRIME EduAI API listening on http://localhost:${config.port}`);

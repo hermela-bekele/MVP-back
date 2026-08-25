@@ -9,7 +9,8 @@
     "build": "tsc",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "db:setup": "npm run db:migrate && npm run db:seed"
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "jobs:billing": "tsx src/scripts/runBillingJobs.ts"
   },
   "dependencies": {
     "@types/cors": "^2.8.19",
@@ -21,6 +22,7 @@
     "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^4.22.2",
+    "helmet": "^8.3.0",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
     "pg": "^8.22.0",

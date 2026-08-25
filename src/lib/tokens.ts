@@ -1,7 +1,27 @@
 import crypto from 'crypto';
 import { config } from '../config.js';
 
-const SECRET = process.env.JWT_SECRET || `prime-${config.nodeEnv}-jwt-secret`;
+function resolveSecret(): string {
+  const fromEnv = process.env.JWT_SECRET;
+  if (fromEnv && fromEnv.length >= 32) return fromEnv;
+
+  if (config.nodeEnv === 'production') {
+    throw new Error(
+      'JWT_SECRET must be set to a random value of at least 32 characters in production. ' +
+        'Refusing to start with a missing/weak/default secret.'
+    );
+  }
+
+  if (fromEnv) {
+    console.warn('⚠️  JWT_SECRET is shorter than 32 characters — fine for local dev, not for production.');
+    return fromEnv;
+  }
+
+  console.warn('⚠️  JWT_SECRET not set — using an ephemeral dev-only secret (tokens invalidate on restart).');
+  return crypto.randomBytes(32).toString('hex');
+}
+
+const SECRET = resolveSecret();
 
 type TokenPayload = {
   sub: string;
@@ -51,7 +71,11 @@ export function verifyAccessToken(token: string): TokenPayload | null {
       .createHmac('sha256', SECRET)
       .update(`${header}.${body}`)
       .digest('base64url');
-    if (sig !== expected) return null;
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expected);
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return null;
+    }
     const payload = JSON.parse(fromB64url(body)) as TokenPayload;
     if (!payload.sub || !payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
