@@ -57,6 +57,16 @@ export const PERMISSIONS = [
   { code: 'hr.manage_performance', label: 'Manage performance reviews', module: 'hr' },
   { code: 'hr.manage_onboarding', label: 'Manage onboarding tasks', module: 'hr' },
   { code: 'hr.manage_attendance', label: 'Record staff attendance', module: 'hr' },
+  { code: 'finance.view_dashboard', label: 'View finance dashboard', module: 'finance' },
+  { code: 'finance.manage_financial_years', label: 'Manage financial years', module: 'finance' },
+  { code: 'finance.manage_periods', label: 'Close/reopen financial periods', module: 'finance' },
+  { code: 'finance.manage_accounts', label: 'Manage chart of accounts', module: 'finance' },
+  { code: 'finance.manage_budget', label: 'Create and submit budgets', module: 'finance' },
+  { code: 'finance.approve_budget', label: 'Approve, reject, or return budgets and transfers', module: 'finance' },
+  { code: 'finance.manage_expense', label: 'Create, submit, and pay expenses', module: 'finance' },
+  { code: 'finance.approve_expense', label: 'Approve, reject, or return expense requests', module: 'finance' },
+  { code: 'finance.manage_payable', label: 'Manage suppliers, supplier invoices, and payments', module: 'finance' },
+  { code: 'finance.approve_payable', label: 'Approve or reject supplier invoices', module: 'finance' },
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number]['code'];
@@ -87,6 +97,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'audit.view',
     'hr.view_employees',
     'hr.approve_leave',
+    'finance.view_dashboard',
+    'finance.approve_budget',
+    'finance.approve_expense',
+    'finance.approve_payable',
   ],
   registrar: [
     'portal.registrar',
@@ -123,6 +137,14 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'billing.reconcile',
     'billing.settings',
     'reports.view',
+    'audit.view',
+    'finance.view_dashboard',
+    'finance.manage_financial_years',
+    'finance.manage_periods',
+    'finance.manage_accounts',
+    'finance.manage_budget',
+    'finance.manage_expense',
+    'finance.manage_payable',
   ],
   teacher: [
     'portal.teacher',
