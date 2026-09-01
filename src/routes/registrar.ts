@@ -22,6 +22,7 @@ registrarRouter.get(
   asyncHandler(async (req, res) => {
     const schoolId = req.query.schoolId as string | undefined;
     const entityType = req.query.entityType as string | undefined;
+    const entityTypes = req.query.entityTypes as string | undefined;
     const entityId = req.query.entityId as string | undefined;
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
 
@@ -31,7 +32,10 @@ registrarRouter.get(
       params.push(schoolId);
       conditions.push(`al.school_id = $${params.length}`);
     }
-    if (entityType) {
+    if (entityTypes) {
+      params.push(entityTypes.split(',').map((t) => t.trim()).filter(Boolean));
+      conditions.push(`al.entity_type = ANY($${params.length})`);
+    } else if (entityType) {
       params.push(entityType);
       conditions.push(`al.entity_type = $${params.length}`);
     }

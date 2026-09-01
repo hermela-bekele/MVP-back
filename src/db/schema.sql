@@ -222,6 +222,37 @@ ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS grade TEXT;
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS subject TEXT;
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS disseminated BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- HR-planned trainings: a scheduled Continuous Development track or In-Person session,
+-- assignable to individual teachers or a whole academic team (department).
+CREATE TABLE IF NOT EXISTS training_plans (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  type TEXT NOT NULL CHECK (type IN ('continuous_development', 'in_person')),
+  start_date DATE NOT NULL,
+  end_date DATE,
+  location TEXT,
+  facilitator TEXT,
+  status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'in_progress', 'completed', 'cancelled')),
+  created_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS training_plan_assignments (
+  id TEXT PRIMARY KEY,
+  training_plan_id TEXT NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('teacher', 'department')),
+  teacher_id TEXT REFERENCES teachers(id) ON DELETE CASCADE,
+  department_id TEXT REFERENCES departments(id) ON DELETE CASCADE,
+  assigned_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    (target_type = 'teacher' AND teacher_id IS NOT NULL AND department_id IS NULL) OR
+    (target_type = 'department' AND department_id IS NOT NULL AND teacher_id IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_assignments_plan ON training_plan_assignments(training_plan_id);
+
 CREATE TABLE IF NOT EXISTS teaching_notes (
   id TEXT PRIMARY KEY,
   teacher_id TEXT REFERENCES teachers(id),

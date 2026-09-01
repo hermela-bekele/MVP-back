@@ -236,6 +236,38 @@ export function mapTrainingMaterial(row: Record<string, unknown>) {
   };
 }
 
+export function mapTrainingPlan(row: Record<string, unknown>) {
+  const start = row.start_date;
+  const end = row.end_date;
+  const created = row.created_at;
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? undefined,
+    type: row.type,
+    startDate: start instanceof Date ? start.toISOString().split('T')[0] : String(start),
+    endDate: end instanceof Date ? end.toISOString().split('T')[0] : end ?? undefined,
+    location: row.location ?? undefined,
+    facilitator: row.facilitator ?? undefined,
+    status: row.status,
+    createdByName: row.created_by_name,
+    createdAt: created instanceof Date ? created.toISOString() : String(created),
+  };
+}
+
+export function mapTrainingPlanAssignment(row: Record<string, unknown>) {
+  const d = row.created_at;
+  return {
+    id: row.id,
+    trainingPlanId: row.training_plan_id,
+    targetType: row.target_type,
+    teacherId: row.teacher_id ?? undefined,
+    departmentId: row.department_id ?? undefined,
+    assignedByName: row.assigned_by_name,
+    createdAt: d instanceof Date ? d.toISOString() : String(d),
+  };
+}
+
 export function mapAcademicCalendar(row: Record<string, unknown>) {
   const created = row.created_at;
   const published = row.published_at;

@@ -20,6 +20,8 @@ import {
   mapSchoolClass,
   mapExam,
   mapTrainingMaterial,
+  mapTrainingPlan,
+  mapTrainingPlanAssignment,
   mapSchoolCheckIn,
   mapAcademicCalendar,
   mapLessonDelivery,
@@ -43,6 +45,10 @@ import { portalRouter } from './portal.js';
 import { communityRouter } from './community.js';
 import { registrarRouter } from './registrar.js';
 import { hrRouter } from './hr.js';
+import { financeRouter } from './finance.js';
+import { budgetRouter } from './budget.js';
+import { expensesRouter } from './expenses.js';
+import { payablesRouter } from './payables.js';
 import { attachPermissions, optionalAuth } from '../middleware/auth.js';
 import { signAccessToken } from '../lib/tokens.js';
 import { writeAudit } from '../lib/audit.js';
@@ -64,6 +70,10 @@ apiRouter.use('/permissions', permissionsRouter);
 apiRouter.use('/portal', portalRouter);
 apiRouter.use('/registrar', registrarRouter);
 apiRouter.use('/hr', hrRouter);
+apiRouter.use('/finance', financeRouter);
+apiRouter.use('/finance', budgetRouter);
+apiRouter.use('/finance', expensesRouter);
+apiRouter.use('/finance', payablesRouter);
 apiRouter.use(communityRouter);
 
 apiRouter.post('/jobs/billing', async (_req, res, next) => {
@@ -1122,6 +1132,96 @@ apiRouter.patch(
       return;
     }
     res.json(mapTeacherTrainingAssignment(rows[0]));
+  })
+);
+
+// HR training planning: schedule a Continuous Development or In-Person training
+// and assign it to individual teachers or a whole academic team (department).
+apiRouter.post(
+  '/training-plans',
+  asyncHandler(async (req, res) => {
+    const { title, description, type, startDate, endDate, location, facilitator, createdByName } = req.body;
+    const id = `plan-${Date.now()}`;
+    await query(
+      `INSERT INTO training_plans (id, title, description, type, start_date, end_date, location, facilitator, created_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        id,
+        title,
+        description ?? null,
+        type,
+        startDate,
+        endDate ?? null,
+        location ?? null,
+        facilitator ?? null,
+        createdByName,
+      ]
+    );
+    const { rows } = await query('SELECT * FROM training_plans WHERE id = $1', [id]);
+    res.status(201).json(mapTrainingPlan(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/training-plans/:id',
+  asyncHandler(async (req, res) => {
+    const { title, description, status, startDate, endDate, location, facilitator } = req.body;
+    await query(
+      `UPDATE training_plans SET
+         title = COALESCE($1, title),
+         description = COALESCE($2, description),
+         status = COALESCE($3, status),
+         start_date = COALESCE($4, start_date),
+         end_date = COALESCE($5, end_date),
+         location = COALESCE($6, location),
+         facilitator = COALESCE($7, facilitator)
+       WHERE id = $8`,
+      [
+        title ?? null,
+        description ?? null,
+        status ?? null,
+        startDate ?? null,
+        endDate ?? null,
+        location ?? null,
+        facilitator ?? null,
+        req.params.id,
+      ]
+    );
+    const { rows } = await query('SELECT * FROM training_plans WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Training plan not found' });
+      return;
+    }
+    res.json(mapTrainingPlan(rows[0]));
+  })
+);
+
+apiRouter.post(
+  '/training-plans/:id/assignments',
+  asyncHandler(async (req, res) => {
+    const { targetType, teacherId, departmentId, assignedByName } = req.body;
+    const id = `plan-assign-${Date.now()}`;
+    await query(
+      `INSERT INTO training_plan_assignments (id, training_plan_id, target_type, teacher_id, department_id, assigned_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, req.params.id, targetType, teacherId ?? null, departmentId ?? null, assignedByName]
+    );
+    const { rows } = await query('SELECT * FROM training_plan_assignments WHERE id = $1', [id]);
+    res.status(201).json(mapTrainingPlanAssignment(rows[0]));
+  })
+);
+
+apiRouter.delete(
+  '/training-plan-assignments/:id',
+  asyncHandler(async (req, res) => {
+    const { rows } = await query('DELETE FROM training_plan_assignments WHERE id = $1 RETURNING id', [
+      req.params.id,
+    ]);
+    if (!rows.length) {
+      res.status(404).json({ error: 'Assignment not found' });
+      return;
+    }
+    res.status(204).end();
   })
 );
 
