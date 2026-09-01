@@ -1211,14 +1211,14 @@ apiRouter.post(
     const existing = await query('SELECT id FROM teaching_notes WHERE id = $1', [id]);
     if (existing.rows.length) {
       await query(
-        `UPDATE teaching_notes SET title=$1, grade=$2, subject=$3, topic=$4, language=$5, content_summary=$6, content_body=$7, lesson_plan_id=$8, updated_at=$9 WHERE id=$10`,
-        [b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.lessonPlanId ?? null, today, id]
+        `UPDATE teaching_notes SET title=$1, grade=$2, subject=$3, topic=$4, language=$5, content_summary=$6, content_body=$7, lesson_plan_id=$8, session_scope=$9, updated_at=$10 WHERE id=$11`,
+        [b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.lessonPlanId ?? null, b.sessionScope ?? null, today, id]
       );
     } else {
       await query(
-        `INSERT INTO teaching_notes (id, teacher_id, lesson_plan_id, title, grade, subject, topic, language, content_summary, content_body, status, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
-        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.status ?? 'Saved', today]
+        `INSERT INTO teaching_notes (id, teacher_id, lesson_plan_id, title, grade, subject, topic, language, content_summary, content_body, status, session_scope, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)`,
+        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.status ?? 'Saved', b.sessionScope ?? null, today]
       );
     }
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [id]);
@@ -1245,6 +1245,7 @@ apiRouter.patch(
       status: 'status',
       lessonPlanId: 'lesson_plan_id',
       deptComments: 'dept_comments',
+      sessionScope: 'session_scope',
     };
     for (const [k, col] of Object.entries(fields)) {
       if (b[k] !== undefined) {
@@ -1444,9 +1445,9 @@ apiRouter.post(
     const id = `tfb-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
     await query(
-      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, subject, comment, rating, date)
-       VALUES ($1,$2,$3,$4,'from_teacher',$5,$6,$7,$8,$9)`,
-      [id, b.teacherId ?? DEMO_TEACHER_ID, b.studentId ?? null, b.studentName ?? null, tch[0]?.name ?? 'Teacher', b.subject, b.comment, b.rating ?? null, today]
+      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, subject, comment, rating, date)
+       VALUES ($1,$2,$3,$4,'from_teacher',$5,$6,$7,$8,$9,$10)`,
+      [id, b.teacherId ?? DEMO_TEACHER_ID, b.studentId ?? null, b.studentName ?? null, tch[0]?.name ?? 'Teacher', b.authorRole ?? null, b.subject, b.comment, b.rating ?? null, today]
     );
     const { rows } = await query('SELECT * FROM teacher_feedbacks WHERE id = $1', [id]);
     res.status(201).json(mapTeacherFeedback(rows[0]));
