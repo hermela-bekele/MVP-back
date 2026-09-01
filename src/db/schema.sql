@@ -270,6 +270,11 @@ CREATE TABLE IF NOT EXISTS teaching_notes (
   updated_at DATE
 );
 
+-- Which weekly-plan session(s) this note actually covers ("all" or a specific session
+-- number) — lets downstream consumers (e.g. department-head exam generation) offer only the
+-- content the teacher actually selected, instead of every session in the linked plan.
+ALTER TABLE teaching_notes ADD COLUMN IF NOT EXISTS session_scope TEXT;
+
 CREATE TABLE IF NOT EXISTS student_grade_entries (
   id TEXT PRIMARY KEY,
   student_id TEXT REFERENCES students(id),
@@ -315,6 +320,11 @@ CREATE TABLE IF NOT EXISTS teacher_feedbacks (
   rating INTEGER,
   date DATE NOT NULL
 );
+-- Who a 'to_teacher' row is anonymously from (student/parent/peer/department-head), or which
+-- audience a 'from_teacher' row is addressed to (student/parent) — was previously accepted
+-- from the client but silently dropped on insert, so every row read back after a refresh fell
+-- through to a hardcoded "department-head" guess on the frontend regardless of the real source.
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS author_role TEXT;
 
 CREATE TABLE IF NOT EXISTS parent_messages (
   id TEXT PRIMARY KEY,

@@ -312,6 +312,7 @@ export function mapTeachingNote(row: Record<string, unknown>) {
     contentBody: row.content_body ?? undefined,
     status: row.status,
     deptComments: row.dept_comments ?? undefined,
+    sessionScope: row.session_scope ?? undefined,
     createdAt:
       created instanceof Date ? created.toISOString().split('T')[0] : String(created),
     updatedAt: updated
@@ -376,6 +377,7 @@ export function mapTeacherFeedback(row: Record<string, unknown>) {
     studentId: row.student_id ?? undefined,
     studentName: row.student_name ?? undefined,
     direction: row.direction,
+    authorRole: row.author_role ?? undefined,
     authorName: row.author_name,
     subject: row.subject,
     comment: row.comment,

@@ -403,8 +403,8 @@ portalRouter.post(
   asyncHandler(async (req, res) => {
     const id = newId('tfb');
     await query(
-      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, subject, comment, rating, date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_DATE)`,
+      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, subject, comment, rating, date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_DATE)`,
       [
         id,
         req.body.teacherId,
@@ -412,6 +412,7 @@ portalRouter.post(
         req.body.studentName ?? null,
         req.body.direction || 'to-teacher',
         req.user!.displayName,
+        req.body.authorRole ?? null,
         req.body.subject || 'General',
         req.body.comment,
         req.body.rating ?? null,

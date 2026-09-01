@@ -937,6 +937,10 @@ export interface TeachingNote {
   contentBody?: string;
   status: 'Draft' | 'Saved';
   deptComments?: string;
+  /** Which weekly-plan session(s) this note actually covers ("all" or a specific session
+   * number) — lets consumers (e.g. department-head exam generation) offer only the content
+   * the teacher actually selected, instead of every session in the linked plan. */
+  sessionScope?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -987,6 +991,9 @@ export interface TeacherFeedback {
   studentId?: string;
   studentName?: string;
   direction: 'to_teacher' | 'from_teacher';
+  /** Who a 'to_teacher' row is anonymously from, or which audience a 'from_teacher' row
+   * (teacher-authored) is addressed to. */
+  authorRole?: 'student' | 'parent' | 'peer' | 'department-head';
   authorName: string;
   subject: string;
   comment: string;
