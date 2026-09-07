@@ -13,6 +13,7 @@ async function migrate() {
     'schema_hr.sql',
     'schema_finance.sql',
     'schema_expenses.sql',
+    'schema_academics.sql',
   ]) {
     const schemaPath = path.join(__dirname, file);
     const sql = fs.readFileSync(schemaPath, 'utf-8');

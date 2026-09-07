@@ -10,6 +10,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:setup": "npm run db:migrate && npm run db:seed",
+    "db:seed:academic-demo": "tsx src/scripts/seedAcademicDemo.ts",
+    "db:unseed:academic-demo": "tsx src/scripts/unseedAcademicDemo.ts",
     "jobs:billing": "tsx src/scripts/runBillingJobs.ts"
   },
   "dependencies": {

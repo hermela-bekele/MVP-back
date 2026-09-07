@@ -1,0 +1,8 @@
+
+> prime-eduai-api@0.1.0 dev
+> cross-env CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=500 tsx watch src/index.ts
+
+PostgreSQL connected.
+Portal auth schema verified.
+Community Socket.IO attached
+PRIME EduAI API listening on http://localhost:3004

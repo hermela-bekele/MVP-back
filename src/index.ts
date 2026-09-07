@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import http from 'http';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
-import { ensurePortalAuthSchema, ensureRegistrationFormsSchema } from './db/ensureSchema.js';
+import { ensurePortalAuthSchema, ensureRegistrationFormsSchema, ensureAcademicResultsSchema } from './db/ensureSchema.js';
 import { apiRouter } from './routes/api.js';
 import { uploadsDir } from './lib/uploads.js';
 import { initCommunityRealtime } from './lib/communityRealtime.js';
@@ -63,6 +63,7 @@ async function start() {
     console.log('PostgreSQL connected.');
     await ensurePortalAuthSchema();
     await ensureRegistrationFormsSchema();
+    await ensureAcademicResultsSchema();
     console.log('Portal auth schema verified.');
   } catch (err) {
     console.error('PostgreSQL connection failed:', err);

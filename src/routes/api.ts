@@ -49,7 +49,8 @@ import { financeRouter } from './finance.js';
 import { budgetRouter } from './budget.js';
 import { expensesRouter } from './expenses.js';
 import { payablesRouter } from './payables.js';
-import { attachPermissions, optionalAuth } from '../middleware/auth.js';
+import { academicResultsRouter, isSubjectTermLocked } from './academicResults.js';
+import { attachPermissions, optionalAuth, requireAuth, requirePermission } from '../middleware/auth.js';
 import { signAccessToken } from '../lib/tokens.js';
 import { writeAudit } from '../lib/audit.js';
 import { rateLimit } from '../lib/rateLimit.js';
@@ -74,6 +75,7 @@ apiRouter.use('/finance', financeRouter);
 apiRouter.use('/finance', budgetRouter);
 apiRouter.use('/finance', expensesRouter);
 apiRouter.use('/finance', payablesRouter);
+apiRouter.use('/academic-results', academicResultsRouter);
 apiRouter.use(communityRouter);
 
 apiRouter.post('/jobs/billing', async (_req, res, next) => {
@@ -1396,12 +1398,37 @@ apiRouter.delete(
 // Grade entries
 apiRouter.post(
   '/grade-entries',
+  requireAuth,
+  requirePermission('grades.enter'),
   asyncHandler(async (req, res) => {
     const b = req.body;
     const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
     const today = new Date().toISOString().split('T')[0];
     const questionResultsJson =
       b.questionResults != null ? JSON.stringify(b.questionResults) : null;
+
+    if (b.studentId && b.subject && b.gradeLevel && b.section && b.term) {
+      const locked = await isSubjectTermLocked({
+        studentId: b.studentId,
+        subject: b.subject,
+        gradeLevel: b.gradeLevel,
+        section: b.section,
+        term: b.term,
+      });
+      if (locked) {
+        const { userHasPermission } = await import('../lib/permissions.js');
+        const canOverride =
+          req.user!.role !== 'teacher' &&
+          (await userHasPermission(req.user!.id, req.user!.role, req.user!.schoolId, 'grades.finalize'));
+        if (!canOverride) {
+          res.status(409).json({
+            error: 'This subject/term has already been submitted or finalized. Ask your Academic Head to reopen it before editing.',
+          });
+          return;
+        }
+      }
+    }
+
     let id = b.id;
     if (id) {
       await query(
@@ -1457,7 +1484,32 @@ apiRouter.post(
 
 apiRouter.delete(
   '/grade-entries/:id',
+  requireAuth,
+  requirePermission('grades.enter'),
   asyncHandler(async (req, res) => {
+    const { rows: existing } = await query('SELECT * FROM student_grade_entries WHERE id = $1', [req.params.id]);
+    const entry = existing[0];
+    if (entry) {
+      const locked = await isSubjectTermLocked({
+        studentId: entry.student_id,
+        subject: entry.subject,
+        gradeLevel: entry.grade_level,
+        section: entry.section,
+        term: entry.term,
+      });
+      if (locked) {
+        const { userHasPermission } = await import('../lib/permissions.js');
+        const canOverride =
+          req.user!.role !== 'teacher' &&
+          (await userHasPermission(req.user!.id, req.user!.role, req.user!.schoolId, 'grades.finalize'));
+        if (!canOverride) {
+          res.status(409).json({
+            error: 'This subject/term has already been submitted or finalized. Ask your Academic Head to reopen it before editing.',
+          });
+          return;
+        }
+      }
+    }
     await query('DELETE FROM student_grade_entries WHERE id = $1', [req.params.id]);
     res.status(204).send();
   })
@@ -1465,6 +1517,7 @@ apiRouter.delete(
 
 apiRouter.post(
   '/students/:id/recalculate-gpa',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const studentId = req.params.id;
     const { rows: entries } = await query(

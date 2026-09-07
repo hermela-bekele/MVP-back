@@ -26,6 +26,7 @@ export const PERMISSIONS = [
   { code: 'billing.settings', label: 'Billing settings', module: 'billing' },
   { code: 'grades.enter', label: 'Enter grades', module: 'academics' },
   { code: 'grades.publish', label: 'Publish grades', module: 'academics' },
+  { code: 'grades.finalize', label: 'Finalize academic results', module: 'academics' },
   { code: 'attendance.enter', label: 'Enter attendance', module: 'academics' },
   { code: 'timetable.manage', label: 'Manage timetable', module: 'academics' },
   { code: 'calendar.manage', label: 'Manage calendar', module: 'academics' },
@@ -83,6 +84,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'billing.view',
     'billing.settings',
     'grades.publish',
+    'grades.finalize',
     'timetable.manage',
     'calendar.manage',
     'announcements.manage',
@@ -183,7 +185,15 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'reports.view',
   ],
   'department-head': ['grades.publish', 'materials.manage', 'reports.view', 'hr.view_employees'],
-  'head-of-academics': ['materials.manage', 'calendar.manage', 'reports.view', 'reports.generate', 'school.settings', 'hr.view_employees'],
+  'head-of-academics': [
+    'materials.manage',
+    'calendar.manage',
+    'reports.view',
+    'reports.generate',
+    'school.settings',
+    'hr.view_employees',
+    'grades.finalize',
+  ],
 };
 
 import { query } from '../db/pool.js';

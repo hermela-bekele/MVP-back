@@ -1,4 +1,9 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { pool } from './pool.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Idempotent auth-column fixes so login/register work even if
@@ -42,4 +47,15 @@ export async function ensureRegistrationFormsSchema() {
   for (const sql of statements) {
     await pool.query(sql);
   }
+}
+
+/**
+ * Idempotent creation of the academic-results / report-card / transcript feature
+ * (subject_term_results, student_term_summaries, report_templates + seeded Ethiopian
+ * defaults) so it works even if schema_academics.sql was never re-applied on the
+ * deployed database.
+ */
+export async function ensureAcademicResultsSchema() {
+  const sql = fs.readFileSync(path.join(__dirname, 'schema_academics.sql'), 'utf-8');
+  await pool.query(sql);
 }
