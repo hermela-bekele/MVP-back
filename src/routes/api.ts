@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { query } from '../db/pool.js';
 import { loadBootstrap } from '../db/bootstrap.js';
+import { isPrivilegedStaff } from '../lib/roles.js';
+import { isTrainingAssignmentComplete, nextTrainingAssignmentStatus } from '../lib/training.js';
 import {
   mapSchool,
   mapStudent,
@@ -36,6 +38,7 @@ import {
   mapMentionNotification,
   mapTeacherSelfAssessment,
   mapTeacherTrainingAssignment,
+  mapTeacherLessonAdjustment,
 } from '../lib/serialize.js';
 import { resourceUpload } from '../lib/uploads.js';
 import { admissionsRouter } from './admissions.js';
@@ -60,8 +63,6 @@ import {
   ensureCommunitiesSeeded,
   ensureDefaultChannels,
 } from '../lib/communitySeed.js';
-
-const DEMO_TEACHER_ID = 'tch-1';
 
 export const apiRouter = Router();
 
@@ -124,6 +125,76 @@ async function getRequestUser(
     displayName: rows[0].display_name as string,
     role: rows[0].role as string,
   };
+}
+
+/** Teacher <-> portal_user linkage is by email (see routes/portal.ts); there is no
+ * teacher_id column on portal_users. */
+async function resolveOwnTeacherId(user: { role: string; email: string }): Promise<string | null> {
+  const { rows } = await query('SELECT id FROM teachers WHERE LOWER(email) = LOWER($1)', [user.email]);
+  return (rows[0]?.id as string | undefined) ?? null;
+}
+
+/** For self-service actions (a teacher recording their own delivery, resource, feedback,
+ * etc.) — never trusts a client-supplied teacherId, always resolves it from the
+ * authenticated session. */
+async function requireOwnTeacherId(req: Request, res: Response): Promise<string | null> {
+  const user = req.user!;
+  if (user.role !== 'teacher') {
+    res.status(403).json({ error: 'Only teachers can perform this action' });
+    return null;
+  }
+  const id = await resolveOwnTeacherId(user);
+  if (!id) {
+    res.status(403).json({ error: 'No teacher record is linked to this account' });
+    return null;
+  }
+  return id;
+}
+
+/** For actions that may be authored either by the teacher themself or, on their behalf,
+ * by a department head / school head / head of academics (e.g. an HoD-authored exam).
+ * Privileged roles must still pass an explicit teacherId; it is validated against the
+ * teachers table by the caller. */
+async function resolveActingTeacherId(
+  req: Request,
+  res: Response,
+  bodyTeacherId?: unknown
+): Promise<string | null> {
+  const user = req.user!;
+  if (user.role === 'teacher') {
+    const id = await resolveOwnTeacherId(user);
+    if (!id) {
+      res.status(403).json({ error: 'No teacher record is linked to this account' });
+      return null;
+    }
+    return id;
+  }
+  if (isPrivilegedStaff(user.role) && typeof bodyTeacherId === 'string' && bodyTeacherId.trim()) {
+    return bodyTeacherId;
+  }
+  res.status(403).json({ error: 'Forbidden' });
+  return null;
+}
+
+/** Ownership gate for edits to an existing row: the teacher who owns it, or a
+ * privileged staff role, may proceed. */
+async function assertOwnsTeacherRow(
+  req: Request,
+  res: Response,
+  ownerTeacherId: string | null
+): Promise<boolean> {
+  const user = req.user!;
+  if (isPrivilegedStaff(user.role)) return true;
+  if (user.role !== 'teacher') {
+    res.status(403).json({ error: 'Forbidden' });
+    return false;
+  }
+  const ownTeacherId = await resolveOwnTeacherId(user);
+  if (!ownTeacherId || !ownerTeacherId || ownTeacherId !== ownerTeacherId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return false;
+  }
+  return true;
 }
 
 async function requireCommunityMembership(
@@ -237,8 +308,9 @@ apiRouter.post('/uploads', (req, res, next) => {
 
 apiRouter.get(
   '/bootstrap',
-  asyncHandler(async (_req, res) => {
-    res.json(await loadBootstrap());
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.json(await loadBootstrap(req.user!));
   })
 );
 
@@ -472,10 +544,21 @@ apiRouter.patch(
   })
 );
 
-// Teachers
+// Teachers — creating/editing a teacher record touches personal contact info
+// (email/phone), so only privileged institutional staff may do it server-side.
+function requirePrivilegedStaff(req: Request, res: Response): boolean {
+  if (!req.user || !isPrivilegedStaff(req.user.role)) {
+    res.status(403).json({ error: 'Only department/school/academic leadership may manage teacher records' });
+    return false;
+  }
+  return true;
+}
+
 apiRouter.post(
   '/teachers',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!requirePrivilegedStaff(req, res)) return;
     const b = req.body;
     const { rows: cnt } = await query('SELECT COUNT(*)::int AS c FROM teachers');
     const id = `tch-${Number(cnt[0].c) + 1}`;
@@ -490,9 +573,28 @@ apiRouter.post(
   })
 );
 
+// Fields a teacher may change on their own record via self-service settings —
+// everything else (department, status, subjects, experienceOverride, ...) is an
+// institutional decision reserved for privileged staff.
+const TEACHER_SELF_EDIT_FIELDS = new Set(['name', 'email', 'phone', 'yearsOfExperience']);
+
 apiRouter.patch(
   '/teachers/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const privileged = isPrivilegedStaff(req.user!.role);
+    if (!privileged) {
+      const ownId = req.user!.role === 'teacher' ? await resolveOwnTeacherId(req.user!) : null;
+      if (!ownId || ownId !== req.params.id) {
+        res.status(403).json({ error: 'Only department/school/academic leadership may manage teacher records' });
+        return;
+      }
+      const disallowed = Object.keys(req.body ?? {}).filter((k) => !TEACHER_SELF_EDIT_FIELDS.has(k));
+      if (disallowed.length) {
+        res.status(403).json({ error: `Cannot self-edit: ${disallowed.join(', ')}` });
+        return;
+      }
+    }
     const b = req.body;
     const fields: string[] = [];
     const vals: unknown[] = [];
@@ -540,7 +642,9 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/teachers/:id/toggle-status',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!requirePrivilegedStaff(req, res)) return;
     const { rows: cur } = await query('SELECT * FROM teachers WHERE id = $1', [req.params.id]);
     if (!cur.length) {
       res.status(404).json({ error: 'Not found' });
@@ -647,15 +751,19 @@ apiRouter.patch(
 // Lesson plans
 apiRouter.post(
   '/lesson-plans',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
-    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
+    const teacherId = await resolveActingTeacherId(req, res, b.teacherId);
+    if (!teacherId) return;
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
     const id = `lp-${Date.now()}`;
-    const status =
-      typeof b.status === 'string' && b.status.trim()
-        ? b.status
-        : 'Pending Dept Head';
+    // A teacher account cannot self-approve by passing status/createdByRole in the body —
+    // only privileged staff (who legitimately author plans that publish immediately) may.
+    const createdByRole = req.user!.role;
+    const status = isPrivilegedStaff(createdByRole)
+      ? (typeof b.status === 'string' && b.status.trim() ? b.status : 'Approved')
+      : 'Pending Dept Head';
     const teacherName =
       (typeof b.teacherName === 'string' && b.teacherName.trim()) ||
       tch[0]?.name ||
@@ -686,7 +794,7 @@ apiRouter.post(
         b.homework ?? '',
         b.planType ?? null,
         b.planDetail ?? null,
-        b.createdByRole ?? null,
+        createdByRole,
       ],
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [id]);
@@ -696,7 +804,12 @@ apiRouter.post(
 
 apiRouter.patch(
   '/lesson-plans/:id/approve',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const { role, comments } = req.body as { role: 'dept' | 'school'; comments: string };
     const { rows: cur } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
     if (!cur.length) {
@@ -722,7 +835,12 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/lesson-plans/:id/reject',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const { role, comments } = req.body as { role: 'dept' | 'school'; comments: string };
     await query(
       `UPDATE lesson_plans SET status = 'Rejected', dept_comments = CASE WHEN $1 = 'dept' THEN $2 ELSE dept_comments END,
@@ -736,7 +854,14 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/lesson-plans/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT teacher_id FROM lesson_plans WHERE id = $1', [req.params.id]);
+    if (!cur.length) {
+      res.status(404).json({ error: 'Lesson plan not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     const { title, objectives, sessions, homework } = req.body;
     await query(
       `UPDATE lesson_plans SET title = $1, objectives = $2, sessions = $3, homework = $4, status = 'Pending Dept Head', version = version + 1 WHERE id = $5`,
@@ -749,6 +874,7 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/lesson-plans/:id/annual',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
     const { rows: cur } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
@@ -756,6 +882,7 @@ apiRouter.patch(
       res.status(404).json({ error: 'Lesson plan not found' });
       return;
     }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     await query(
       `UPDATE lesson_plans SET
         title = $1, grade = $2, subject = $3, sessions = $4,
@@ -782,8 +909,22 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/lesson-plans/:id/meta',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const { rows: curOwner } = await query('SELECT teacher_id FROM lesson_plans WHERE id = $1', [req.params.id]);
+    if (!curOwner.length) {
+      res.status(404).json({ error: 'Lesson plan not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, curOwner[0].teacher_id as string | null))) return;
     const b = req.body as Record<string, unknown>;
+    // createdByRole and status both gate the approval workflow (see POST /lesson-plans and
+    // /lesson-plans/:id/approve) — an owning teacher must never be able to set either
+    // directly here, or they could forge "authored by department-head" / self-approve.
+    if ((b.createdByRole !== undefined || b.status !== undefined) && !isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Only department/school/academic leadership may set plan status or authorship' });
+      return;
+    }
     const fields: string[] = [];
     const vals: unknown[] = [];
     let i = 1;
@@ -824,12 +965,14 @@ apiRouter.patch(
 
 apiRouter.delete(
   '/lesson-plans/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { rows: cur } = await query('SELECT id FROM lesson_plans WHERE id = $1', [req.params.id]);
+    const { rows: cur } = await query('SELECT id, teacher_id FROM lesson_plans WHERE id = $1', [req.params.id]);
     if (!cur[0]) {
       res.status(404).json({ error: 'Lesson plan not found' });
       return;
     }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     const { rows: notes } = await query(
       'SELECT id FROM teaching_notes WHERE lesson_plan_id = $1',
       [req.params.id],
@@ -859,13 +1002,70 @@ apiRouter.delete(
   }),
 );
 
+// TE-004: Teacher Adjustments — every departure from the annual plan is logged here
+// rather than overwriting it. The annual plan (lesson_plans) stays the untouched
+// baseline; this table is the record of what changed, why, and its pacing impact.
+apiRouter.post(
+  '/teacher-lesson-adjustments',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const b = req.body;
+    if (!b.originalTopic || !b.revisedTopic || !b.reason || !b.grade || !b.subject) {
+      res.status(400).json({ error: 'grade, subject, originalTopic, revisedTopic and reason are required' });
+      return;
+    }
+    const id = `adj-${Date.now()}`;
+    const today = new Date().toISOString().split('T')[0];
+    await query(
+      `INSERT INTO teacher_lesson_adjustments
+       (id, teacher_id, annual_plan_id, weekly_plan_id, grade, subject, original_topic, revised_topic, reason, pacing_impact, adjustment_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        id,
+        teacherId,
+        b.annualPlanId ?? null,
+        b.weeklyPlanId ?? null,
+        b.grade,
+        b.subject,
+        b.originalTopic,
+        b.revisedTopic,
+        b.reason,
+        b.pacingImpact ?? null,
+        today,
+      ]
+    );
+    const { rows } = await query('SELECT * FROM teacher_lesson_adjustments WHERE id = $1', [id]);
+    res.status(201).json(mapTeacherLessonAdjustment(rows[0]));
+  })
+);
+
+apiRouter.get(
+  '/teacher-lesson-adjustments/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const { rows } = await query(
+      'SELECT * FROM teacher_lesson_adjustments WHERE teacher_id = $1 ORDER BY created_at DESC',
+      [teacherId]
+    );
+    res.json(rows.map(mapTeacherLessonAdjustment));
+  })
+);
+
 // Assessments
 apiRouter.post(
   '/assessments',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
-    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
-    const createdByRole = String(b.createdByRole ?? 'teacher');
+    const teacherId = await resolveActingTeacherId(req, res, b.teacherId);
+    if (!teacherId) return;
+    // Derived from the session, not the request body — a teacher account cannot claim
+    // 'department-head' to short-circuit assessmentInitialStatus's auto-approve path.
+    const createdByRole = req.user!.role;
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
     const authorName =
       b.teacherName ||
@@ -874,9 +1074,27 @@ apiRouter.post(
       'Teacher';
     const status = assessmentInitialStatus(String(b.type), createdByRole);
     const id = `asm-${Date.now()}`;
+
+    // TE-007: for a Unit Test, only IDs of teaching notes this teacher actually
+    // delivered (a real lesson_deliveries row exists) may be attached as coverage —
+    // never an arbitrary/unverified list.
+    let coveredTeachingNoteIds: string[] = [];
+    if (String(b.type) === 'Unit Test' && Array.isArray(b.coveredTeachingNoteIds)) {
+      const candidateIds = b.coveredTeachingNoteIds.filter((x: unknown) => typeof x === 'string');
+      if (candidateIds.length) {
+        const { rows: delivered } = await query(
+          `SELECT tn.id FROM teaching_notes tn
+           JOIN lesson_deliveries ld ON ld.teaching_note_id = tn.id
+           WHERE tn.id = ANY($1::text[]) AND tn.teacher_id = $2`,
+          [candidateIds, teacherId]
+        );
+        coveredTeachingNoteIds = delivered.map((r) => r.id as string);
+      }
+    }
+
     await query(
-      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_by_role, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_by_role, covered_teaching_note_ids, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())`,
       [
         id,
         b.title,
@@ -889,6 +1107,7 @@ apiRouter.post(
         b.difficulty,
         JSON.stringify(b.questions ?? []),
         createdByRole,
+        JSON.stringify(coveredTeachingNoteIds),
       ]
     );
     if (status === 'Approved') {
@@ -913,7 +1132,14 @@ apiRouter.post(
 
 apiRouter.patch(
   '/assessments/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT teacher_id FROM assessments WHERE id = $1', [req.params.id]);
+    if (!cur.length) {
+      res.status(404).json({ error: 'Assessment not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     const { questions } = req.body;
     if (!Array.isArray(questions)) {
       res.status(400).json({ error: 'questions array required' });
@@ -932,7 +1158,12 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/assessments/:id/approve',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const { comments } = req.body;
     await query(`UPDATE assessments SET status = 'Approved', comments = $1 WHERE id = $2`, [comments, req.params.id]);
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
@@ -942,7 +1173,12 @@ apiRouter.patch(
 
 apiRouter.patch(
   '/assessments/:id/reject',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const { comments } = req.body;
     await query(`UPDATE assessments SET status = 'Rejected', comments = $1 WHERE id = $2`, [comments, req.params.id]);
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
@@ -952,12 +1188,14 @@ apiRouter.patch(
 
 apiRouter.delete(
   '/assessments/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { rows: cur } = await query('SELECT id FROM assessments WHERE id = $1', [req.params.id]);
+    const { rows: cur } = await query('SELECT id, teacher_id FROM assessments WHERE id = $1', [req.params.id]);
     if (!cur[0]) {
       res.status(404).json({ error: 'Assessment not found' });
       return;
     }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     await query('DELETE FROM assessments WHERE id = $1', [req.params.id]);
     res.status(204).end();
   }),
@@ -966,19 +1204,50 @@ apiRouter.delete(
 // Attendance batch
 apiRouter.post(
   '/attendance/batch',
+  requireAuth,
+  requirePermission('attendance.enter'),
   asyncHandler(async (req, res) => {
-    const { records } = req.body as {
+    const { records, timetableSlotId } = req.body as {
       records: { studentId: string; status: string; remarks?: string }[];
+      timetableSlotId?: string;
     };
+    // TE-002/CM-006: attendance is attributed to the recording teacher, and — when the
+    // caller names the scheduled session it was taken for — linked to that timetable
+    // slot, so it can be traced back to which class/subject/period it belongs to.
+    const teacherId = await resolveActingTeacherId(req, res, req.body.teacherId);
+    if (!teacherId) return;
+    let resolvedSlotId: string | null = null;
+    if (typeof timetableSlotId === 'string' && timetableSlotId.trim()) {
+      const { rows: slot } = await query('SELECT id FROM timetable_slots WHERE id = $1', [timetableSlotId]);
+      resolvedSlotId = slot.length ? timetableSlotId : null;
+    }
     const today = new Date().toISOString().split('T')[0];
+
+    // CM-006: reject the whole batch up front if this scheduled session already has
+    // attendance recorded for any of these students, instead of partially saving and
+    // then hitting the unique index mid-loop.
+    if (resolvedSlotId) {
+      const studentIds = records.map((r) => r.studentId);
+      const { rows: existing } = await query(
+        `SELECT student_id FROM attendance WHERE timetable_slot_id = $1 AND date = $2 AND student_id = ANY($3::text[])`,
+        [resolvedSlotId, today, studentIds]
+      );
+      if (existing.length) {
+        res.status(409).json({
+          error: `Attendance for this session has already been recorded for ${existing.length} student${existing.length === 1 ? '' : 's'} today.`,
+        });
+        return;
+      }
+    }
+
     const created: ReturnType<typeof mapAttendance>[] = [];
     for (const rec of records) {
       const { rows: std } = await query('SELECT * FROM students WHERE id = $1', [rec.studentId]);
       const student = std[0];
       const id = `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       await query(
-        `INSERT INTO attendance (id, student_id, student_name, grade, section, date, status, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, rec.studentId, student?.name ?? 'Unknown', student?.grade ?? '', student?.section ?? '', today, rec.status, rec.remarks ?? null]
+        `INSERT INTO attendance (id, student_id, student_name, grade, section, date, status, remarks, teacher_id, timetable_slot_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [id, rec.studentId, student?.name ?? 'Unknown', student?.grade ?? '', student?.section ?? '', today, rec.status, rec.remarks ?? null, teacherId, resolvedSlotId]
       );
       if (student) {
         const totalDays = 20;
@@ -1094,8 +1363,11 @@ apiRouter.post(
 // STEP self-assessment: a teacher submits (or resubmits) their rubric self-rating.
 apiRouter.post(
   '/teacher-self-assessments',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { teacherId, responses, overallScore, weakestCompetencyId } = req.body;
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const { responses, overallScore, weakestCompetencyId } = req.body;
     const id = `sa-${Date.now()}`;
     await query(
       `INSERT INTO teacher_self_assessments (id, teacher_id, responses, overall_score, weakest_competency_id)
@@ -1110,29 +1382,151 @@ apiRouter.post(
 // HoD/School Head assigns a TIP/STEP/ELEP module to a specific teacher or leader.
 apiRouter.post(
   '/teacher-training-assignments',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { teacherId, program, moduleId, moduleTitle, assignedByName, reason } = req.body;
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const { teacherId, program, moduleId, moduleTitle, reason, dueDate, sessionsTotal } = req.body;
+    if (!teacherId) {
+      res.status(400).json({ error: 'teacherId required' });
+      return;
+    }
+    const { rows: tch } = await query('SELECT id FROM teachers WHERE id = $1', [teacherId]);
+    if (!tch.length) {
+      res.status(404).json({ error: 'Teacher not found' });
+      return;
+    }
     const id = `assign-${Date.now()}`;
     await query(
-      `INSERT INTO teacher_training_assignments (id, teacher_id, program, module_id, module_title, assigned_by_name, reason)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, teacherId, program, moduleId, moduleTitle, assignedByName, reason ?? null]
+      `INSERT INTO teacher_training_assignments (id, teacher_id, program, module_id, module_title, assigned_by_name, reason, due_date, sessions_total)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, teacherId, program, moduleId, moduleTitle, req.user!.displayName, reason ?? null, dueDate ?? null, sessionsTotal ?? null]
     );
     const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [id]);
     res.status(201).json(mapTeacherTrainingAssignment(rows[0]));
   })
 );
 
+// A teacher's own assigned training, regardless of program — the "Assigned to Me" view.
+apiRouter.get(
+  '/teacher-training-assignments/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const { rows } = await query(
+      'SELECT * FROM teacher_training_assignments WHERE teacher_id = $1 ORDER BY created_at DESC',
+      [teacherId]
+    );
+    res.json(rows.map(mapTeacherTrainingAssignment));
+  })
+);
+
+// Manual status edits (e.g. an HoD reopening or cancelling an assignment). Completion
+// can NEVER be set here — only /progress can mark an assignment completed, and only
+// once all three of its requirements are actually met (TR-007).
 apiRouter.patch(
   '/teacher-training-assignments/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { status } = req.body;
-    await query('UPDATE teacher_training_assignments SET status = $1 WHERE id = $2', [status, req.params.id]);
-    const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
-    if (!rows.length) {
+    const { rows: cur } = await query('SELECT teacher_id FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
+    if (!cur.length) {
       res.status(404).json({ error: 'Assignment not found' });
       return;
     }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
+    const { status } = req.body as { status?: string };
+    if (status === 'completed') {
+      res.status(400).json({
+        error: 'A module can only be completed via /progress, once sessions, assessment, and reflection are all done.',
+      });
+      return;
+    }
+    if (status !== 'assigned' && status !== 'in_progress') {
+      res.status(400).json({ error: "status must be 'assigned' or 'in_progress'" });
+      return;
+    }
+    await query('UPDATE teacher_training_assignments SET status = $1 WHERE id = $2', [status, req.params.id]);
+    const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
+    res.json(mapTeacherTrainingAssignment(rows[0]));
+  })
+);
+
+// TR-007: the only path that can mark a module completed. Completion requires ALL of:
+// every session done, the final assessment passed, and the reflection submitted —
+// enforced here server-side, not left to the client to decide.
+apiRouter.patch(
+  '/teacher-training-assignments/:id/progress',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows: cur } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
+    if (!cur.length) {
+      res.status(404).json({ error: 'Assignment not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
+
+    const b = req.body as {
+      sessionsCompleted?: number;
+      sessionsTotal?: number;
+      assessmentScore?: number;
+      assessmentPassed?: boolean;
+      reflectionSubmitted?: boolean;
+      reflectionAnswers?: unknown;
+    };
+    const row = cur[0];
+    const sessionsCompleted = b.sessionsCompleted ?? Number(row.sessions_completed ?? 0);
+    const sessionsTotal = b.sessionsTotal ?? (row.sessions_total != null ? Number(row.sessions_total) : undefined);
+    const assessmentScore = b.assessmentScore ?? (row.assessment_score != null ? Number(row.assessment_score) : undefined);
+    const assessmentPassed = b.assessmentPassed ?? row.assessment_passed ?? undefined;
+    const reflectionSubmitted = b.reflectionSubmitted ?? Boolean(row.reflection_submitted);
+    const reflectionAnswers = b.reflectionAnswers ?? row.reflection_answers ?? null;
+
+    const isComplete = isTrainingAssignmentComplete({
+      sessionsCompleted,
+      sessionsTotal,
+      assessmentPassed,
+      reflectionSubmitted,
+    });
+    const wasComplete = row.status === 'completed';
+    const nextStatus = nextTrainingAssignmentStatus({
+      sessionsCompleted,
+      sessionsTotal,
+      assessmentScore,
+      assessmentPassed,
+      reflectionSubmitted,
+      currentStatus: String(row.status),
+    });
+
+    await query(
+      `UPDATE teacher_training_assignments SET
+         sessions_completed = $1, sessions_total = COALESCE($2, sessions_total),
+         assessment_score = $3, assessment_passed = $4,
+         reflection_submitted = $5, reflection_answers = $6::jsonb,
+         status = $7, completed_at = CASE WHEN $7 = 'completed' AND completed_at IS NULL THEN NOW() ELSE completed_at END
+       WHERE id = $8`,
+      [
+        sessionsCompleted,
+        sessionsTotal ?? null,
+        assessmentScore ?? null,
+        assessmentPassed ?? null,
+        reflectionSubmitted,
+        reflectionAnswers != null ? JSON.stringify(reflectionAnswers) : null,
+        nextStatus,
+        req.params.id,
+      ]
+    );
+    if (isComplete && !wasComplete) {
+      await insertNotification(
+        'Training module completed',
+        `${row.module_title} — sessions, assessment, and reflection all complete.`,
+        'success',
+        '/dashboard/department-head/training'
+      );
+    }
+    const { rows } = await query('SELECT * FROM teacher_training_assignments WHERE id = $1', [req.params.id]);
     res.json(mapTeacherTrainingAssignment(rows[0]));
   })
 );
@@ -1305,22 +1699,34 @@ apiRouter.patch(
 // Teaching notes
 apiRouter.post(
   '/teaching-notes',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
     const id = b.id ?? `tn-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
-    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
-    const existing = await query('SELECT id FROM teaching_notes WHERE id = $1', [id]);
+    const existing = await query('SELECT id, teacher_id FROM teaching_notes WHERE id = $1', [id]);
     if (existing.rows.length) {
+      if (!(await assertOwnsTeacherRow(req, res, existing.rows[0].teacher_id as string | null))) return;
       await query(
         `UPDATE teaching_notes SET title=$1, grade=$2, subject=$3, topic=$4, language=$5, content_summary=$6, content_body=$7, lesson_plan_id=$8, session_scope=$9, updated_at=$10 WHERE id=$11`,
         [b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.lessonPlanId ?? null, b.sessionScope ?? null, today, id]
       );
     } else {
+      const teacherId = await requireOwnTeacherId(req, res);
+      if (!teacherId) return;
+      // TE-005: a note with no linked lesson plan is a Supplementary/Unplanned Session —
+      // an exception to the plan -> note evidence chain, so it must carry a reason.
+      const standaloneReason = typeof b.standaloneReason === 'string' ? b.standaloneReason.trim() : '';
+      if (!b.lessonPlanId && !standaloneReason) {
+        res.status(400).json({
+          error: 'A reason is required for a note with no linked lesson plan (Supplementary / Unplanned Session).',
+        });
+        return;
+      }
       await query(
-        `INSERT INTO teaching_notes (id, teacher_id, lesson_plan_id, title, grade, subject, topic, language, content_summary, content_body, status, session_scope, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)`,
-        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.status ?? 'Saved', b.sessionScope ?? null, today]
+        `INSERT INTO teaching_notes (id, teacher_id, lesson_plan_id, title, grade, subject, topic, language, content_summary, content_body, status, session_scope, standalone_reason, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)`,
+        [id, teacherId, b.lessonPlanId ?? null, b.title, b.grade, b.subject, b.topic, b.language, b.contentSummary, b.contentBody ?? null, b.status ?? 'Saved', b.sessionScope ?? null, b.lessonPlanId ? null : standaloneReason, today]
       );
     }
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [id]);
@@ -1330,7 +1736,14 @@ apiRouter.post(
 
 apiRouter.patch(
   '/teaching-notes/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const { rows: curOwner } = await query('SELECT teacher_id FROM teaching_notes WHERE id = $1', [req.params.id]);
+    if (!curOwner.length) {
+      res.status(404).json({ error: 'Teaching note not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, curOwner[0].teacher_id as string | null))) return;
     const b = req.body;
     const today = new Date().toISOString().split('T')[0];
     const sets: string[] = ['updated_at = $1'];
@@ -1348,6 +1761,7 @@ apiRouter.patch(
       lessonPlanId: 'lesson_plan_id',
       deptComments: 'dept_comments',
       sessionScope: 'session_scope',
+      standaloneReason: 'standalone_reason',
     };
     for (const [k, col] of Object.entries(fields)) {
       if (b[k] !== undefined) {
@@ -1364,7 +1778,14 @@ apiRouter.patch(
 
 apiRouter.post(
   '/teaching-notes/:id/submit',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const { rows: curOwner } = await query('SELECT teacher_id FROM teaching_notes WHERE id = $1', [req.params.id]);
+    if (!curOwner.length) {
+      res.status(404).json({ error: 'Teaching note not found' });
+      return;
+    }
+    if (!(await assertOwnsTeacherRow(req, res, curOwner[0].teacher_id as string | null))) return;
     const today = new Date().toISOString().split('T')[0];
     await query(`UPDATE teaching_notes SET status = 'Saved', updated_at = $1 WHERE id = $2`, [today, req.params.id]);
     const { rows } = await query('SELECT * FROM teaching_notes WHERE id = $1', [req.params.id]);
@@ -1374,12 +1795,14 @@ apiRouter.post(
 
 apiRouter.delete(
   '/teaching-notes/:id',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { rows: cur } = await query('SELECT id FROM teaching_notes WHERE id = $1', [req.params.id]);
+    const { rows: cur } = await query('SELECT id, teacher_id FROM teaching_notes WHERE id = $1', [req.params.id]);
     if (!cur[0]) {
       res.status(404).json({ error: 'Teaching note not found' });
       return;
     }
+    if (!(await assertOwnsTeacherRow(req, res, cur[0].teacher_id as string | null))) return;
     await query('UPDATE community_posts SET teaching_note_id = NULL WHERE teaching_note_id = $1', [
       req.params.id,
     ]);
@@ -1402,7 +1825,8 @@ apiRouter.post(
   requirePermission('grades.enter'),
   asyncHandler(async (req, res) => {
     const b = req.body;
-    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
+    const teacherId = await resolveActingTeacherId(req, res, b.teacherId);
+    if (!teacherId) return;
     const today = new Date().toISOString().split('T')[0];
     const questionResultsJson =
       b.questionResults != null ? JSON.stringify(b.questionResults) : null;
@@ -1429,10 +1853,21 @@ apiRouter.post(
       }
     }
 
+    // CM-003: resolve the real class this result belongs to (rather than only the
+    // free-text grade/section pair) whenever exactly one class matches.
+    let classId: string | null = null;
+    if (b.gradeLevel && b.section) {
+      const { rows: classRows } = await query(
+        'SELECT id FROM school_classes WHERE grade = $1 AND section = $2',
+        [b.gradeLevel, b.section]
+      );
+      if (classRows.length === 1) classId = classRows[0].id as string;
+    }
+
     let id = b.id;
     if (id) {
       await query(
-        `UPDATE student_grade_entries SET student_id=$1, subject=$2, grade_level=$3, section=$4, entry_type=$5, title=$6, assessment_id=$7, score=$8, max_score=$9, weight=$10, term=$11, remarks=$12, recorded_at=$13, teacher_id=$14, question_results=$15::jsonb WHERE id=$16`,
+        `UPDATE student_grade_entries SET student_id=$1, subject=$2, grade_level=$3, section=$4, entry_type=$5, title=$6, assessment_id=$7, score=$8, max_score=$9, weight=$10, term=$11, remarks=$12, recorded_at=$13, teacher_id=$14, question_results=$15::jsonb, class_id=$16 WHERE id=$17`,
         [
           b.studentId,
           b.subject,
@@ -1449,14 +1884,15 @@ apiRouter.post(
           today,
           teacherId,
           questionResultsJson,
+          classId,
           id,
         ]
       );
     } else {
       id = `ge-${Date.now()}`;
       await query(
-        `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks, question_results)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+        `INSERT INTO student_grade_entries (id, student_id, teacher_id, subject, grade_level, section, entry_type, title, assessment_id, score, max_score, weight, term, recorded_at, remarks, question_results, class_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17)`,
         [
           id,
           b.studentId,
@@ -1474,6 +1910,7 @@ apiRouter.post(
           today,
           b.remarks ?? null,
           questionResultsJson,
+          classId,
         ]
       );
     }
@@ -1562,28 +1999,131 @@ function percentToGpa(avgPercent: number) {
 // Teacher resources, messages, feedback, check-in prompts
 apiRouter.post(
   '/teacher-resources',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
     const b = req.body;
     const id = `tres-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
     await query(
       `INSERT INTO teacher_resources (id, teacher_id, title, type, grade, subject, url, downloads, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8)`,
-      [id, b.teacherId ?? DEMO_TEACHER_ID, b.title, b.type, b.grade, b.subject, b.url, today]
+      [id, teacherId, b.title, b.type, b.grade, b.subject, b.url, today]
     );
     const { rows } = await query('SELECT * FROM teacher_resources WHERE id = $1', [id]);
     res.status(201).json(mapTeacherResource(rows[0]));
   })
 );
 
+// TE-010: a teacher's own uploads regardless of review status (bootstrap only
+// returns APPROVED resources, so pending/rejected ones aren't visible there).
+apiRouter.get(
+  '/teacher-resources/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const { rows } = await query(
+      'SELECT * FROM teacher_resources WHERE teacher_id = $1 ORDER BY created_at DESC',
+      [teacherId]
+    );
+    res.json(rows.map(mapTeacherResource));
+  })
+);
+
+// TE-010: the HoD review queue.
+apiRouter.get(
+  '/teacher-resources/pending',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const { rows } = await query(
+      "SELECT * FROM teacher_resources WHERE status = 'PENDING' ORDER BY created_at ASC"
+    );
+    res.json(rows.map(mapTeacherResource));
+  })
+);
+
+// TE-010: HoD review workflow. A teacher can never approve/reject/remove their own
+// upload — only a privileged staff role may.
+apiRouter.patch(
+  '/teacher-resources/:id/approve',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const { comment } = req.body as { comment?: string };
+    const { rows } = await query(
+      `UPDATE teacher_resources SET status = 'APPROVED', reviewed_by = $1, reviewed_at = NOW(), review_comment = $2 WHERE id = $3 RETURNING *`,
+      [req.user!.id, comment ?? null, req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+    res.json(mapTeacherResource(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/teacher-resources/:id/reject',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const { comment } = req.body as { comment?: string };
+    const { rows } = await query(
+      `UPDATE teacher_resources SET status = 'REJECTED', reviewed_by = $1, reviewed_at = NOW(), review_comment = $2 WHERE id = $3 RETURNING *`,
+      [req.user!.id, comment ?? null, req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+    res.json(mapTeacherResource(rows[0]));
+  })
+);
+
+apiRouter.patch(
+  '/teacher-resources/:id/remove',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    const { comment } = req.body as { comment?: string };
+    const { rows } = await query(
+      `UPDATE teacher_resources SET status = 'REMOVED', reviewed_by = $1, reviewed_at = NOW(), review_comment = $2 WHERE id = $3 RETURNING *`,
+      [req.user!.id, comment ?? null, req.params.id]
+    );
+    if (!rows.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+    res.json(mapTeacherResource(rows[0]));
+  })
+);
+
 apiRouter.post(
   '/parent-messages',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
     const b = req.body;
     const id = `pm-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
     await query(
       `INSERT INTO parent_messages (id, teacher_id, student_id, student_name, parent_name, message, sent_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, b.teacherId ?? DEMO_TEACHER_ID, b.studentId, b.studentName, b.parentName, b.message, today]
+      [id, teacherId, b.studentId, b.studentName, b.parentName, b.message, today]
     );
     const { rows } = await query('SELECT * FROM parent_messages WHERE id = $1', [id]);
     res.status(201).json(mapParentMessage(rows[0]));
@@ -1592,15 +2132,18 @@ apiRouter.post(
 
 apiRouter.post(
   '/teacher-feedbacks',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
     const b = req.body;
-    const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [b.teacherId ?? DEMO_TEACHER_ID]);
+    const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
     const id = `tfb-${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
     await query(
       `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, subject, comment, rating, date)
        VALUES ($1,$2,$3,$4,'from_teacher',$5,$6,$7,$8,$9,$10)`,
-      [id, b.teacherId ?? DEMO_TEACHER_ID, b.studentId ?? null, b.studentName ?? null, tch[0]?.name ?? 'Teacher', b.authorRole ?? null, b.subject, b.comment, b.rating ?? null, today]
+      [id, teacherId, b.studentId ?? null, b.studentName ?? null, tch[0]?.name ?? 'Teacher', b.authorRole ?? null, b.subject, b.comment, b.rating ?? null, today]
     );
     const { rows } = await query('SELECT * FROM teacher_feedbacks WHERE id = $1', [id]);
     res.status(201).json(mapTeacherFeedback(rows[0]));
@@ -1609,7 +2152,12 @@ apiRouter.post(
 
 apiRouter.patch(
   '/teacher-check-in-prompts/:id/respond',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    if (req.user!.role !== 'teacher') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const { response } = req.body;
     const today = new Date().toISOString().split('T')[0];
     await query(
@@ -1624,6 +2172,7 @@ apiRouter.patch(
 // Notifications
 apiRouter.post(
   '/notifications',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const { title, description, type, linkPath } = req.body;
     const notif = await insertNotification(title, description, type, linkPath);
@@ -1642,7 +2191,12 @@ apiRouter.patch(
 
 apiRouter.delete(
   '/notifications',
-  asyncHandler(async (_req, res) => {
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     await query('DELETE FROM notifications');
     res.status(204).send();
   })
@@ -1651,9 +2205,11 @@ apiRouter.delete(
 // Lesson deliveries (mark taught + grasp feedback)
 apiRouter.post(
   '/lesson-deliveries',
+  requireAuth,
   asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
     const b = req.body;
-    const teacherId = b.teacherId ?? DEMO_TEACHER_ID;
     const graspOutcome = b.graspOutcome as string;
     if (!['well_grasped', 'majority_grasped', 'challenged'].includes(graspOutcome)) {
       res.status(400).json({ error: 'Invalid grasp outcome' });
@@ -1672,6 +2228,10 @@ apiRouter.post(
       return;
     }
     const note = noteResult.rows[0];
+    if ((note.teacher_id as string | null) !== teacherId) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const noteStatus = String(note.status || '');
     if (noteStatus !== 'Approved') {
       // Soft path: classroom delivery implies the note was taught — promote to Approved
@@ -1720,14 +2280,8 @@ apiRouter.post(
     // Resolve + authorize the Discord-style community channel before writing anything.
     let resolvedChannelId = '';
     let resolvedCommunityId = '';
-    let requestUser: Awaited<ReturnType<typeof getRequestUser>> = null;
+    const requestUser = req.user!;
     if (graspOutcome === 'challenged' && postedToCommunity) {
-      requestUser = await getRequestUser(req);
-      if (!requestUser) {
-        res.status(401).json({ error: 'Sign in to post a challenge to a community.' });
-        return;
-      }
-
       resolvedChannelId = String(b.channelId ?? '').trim();
       resolvedCommunityId = String(b.communityId ?? '').trim();
 
@@ -2569,8 +3123,19 @@ apiRouter.post(
 // Teacher ↔ HoD staff messages (polled for near-real-time)
 apiRouter.get(
   '/staff-messages',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const teacherId = typeof req.query.teacherId === 'string' ? req.query.teacherId : null;
+    let teacherId = typeof req.query.teacherId === 'string' ? req.query.teacherId : null;
+    if (req.user!.role === 'teacher') {
+      teacherId = await resolveOwnTeacherId(req.user!);
+      if (!teacherId) {
+        res.status(403).json({ error: 'No teacher record is linked to this account' });
+        return;
+      }
+    } else if (!isPrivilegedStaff(req.user!.role)) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const departmentId =
       typeof req.query.departmentId === 'string' ? req.query.departmentId : null;
     const since = typeof req.query.since === 'string' ? req.query.since : null;
@@ -2598,17 +3163,33 @@ apiRouter.get(
 
 apiRouter.post(
   '/staff-messages',
+  requireAuth,
   asyncHandler(async (req, res) => {
     const b = req.body;
-    if (!b.teacherId || !b.body?.trim() || !b.senderId || !b.senderName || !b.senderRole) {
+    if (!b.body?.trim()) {
       res.status(400).json({ error: 'Missing required message fields' });
       return;
+    }
+    const senderRole = req.user!.role === 'teacher' ? 'teacher' : 'department-head';
+    let teacherId: string | null;
+    if (senderRole === 'teacher') {
+      teacherId = await resolveOwnTeacherId(req.user!);
+      if (!teacherId) {
+        res.status(403).json({ error: 'No teacher record is linked to this account' });
+        return;
+      }
+    } else {
+      if (!isPrivilegedStaff(req.user!.role) || !b.teacherId) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      teacherId = b.teacherId;
     }
     const id = b.id ?? `sm-${Date.now()}`;
     let departmentId = b.departmentId ?? null;
     if (!departmentId) {
       const { rows: tch } = await query('SELECT department_id FROM teachers WHERE id = $1', [
-        b.teacherId,
+        teacherId,
       ]);
       departmentId = tch[0]?.department_id ?? null;
     }
@@ -2618,21 +3199,21 @@ apiRouter.post(
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,NOW())`,
       [
         id,
-        b.teacherId,
+        teacherId,
         departmentId,
-        b.senderId,
-        b.senderName,
-        b.senderRole,
+        req.user!.id,
+        req.user!.displayName,
+        senderRole,
         String(b.body).trim(),
         b.relatedDeliveryId ?? null,
         b.relatedPostId ?? null,
       ],
     );
-    if (b.senderRole === 'teacher') {
+    if (senderRole === 'teacher') {
       const isMissReport = String(b.body).includes('[GRADE_MISS_REPORT]');
       await insertNotification(
         isMissReport ? 'Grade gap report' : 'Message from teacher',
-        `${b.senderName}: ${String(b.body).trim().slice(0, 120)}`,
+        `${req.user!.displayName}: ${String(b.body).trim().slice(0, 120)}`,
         isMissReport ? 'request' : 'info',
         isMissReport
           ? '/dashboard/department-head/training'
@@ -2641,7 +3222,7 @@ apiRouter.post(
     } else {
       await insertNotification(
         'Message from HoD',
-        `${b.senderName}: ${String(b.body).trim().slice(0, 120)}`,
+        `${req.user!.displayName}: ${String(b.body).trim().slice(0, 120)}`,
         'info',
         '/dashboard/teacher/communication',
       );
@@ -2653,14 +3234,26 @@ apiRouter.post(
 
 apiRouter.patch(
   '/staff-messages/mark-read',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { teacherId, readerRole } = req.body as {
-      teacherId?: string;
-      readerRole?: 'teacher' | 'department-head';
-    };
-    if (!teacherId || !readerRole) {
-      res.status(400).json({ error: 'teacherId and readerRole required' });
-      return;
+    let teacherId: string | null;
+    const readerRole: 'teacher' | 'department-head' = req.user!.role === 'teacher' ? 'teacher' : 'department-head';
+    if (readerRole === 'teacher') {
+      teacherId = await resolveOwnTeacherId(req.user!);
+      if (!teacherId) {
+        res.status(403).json({ error: 'No teacher record is linked to this account' });
+        return;
+      }
+    } else {
+      if (!isPrivilegedStaff(req.user!.role)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      teacherId = typeof req.body?.teacherId === 'string' ? req.body.teacherId : null;
+      if (!teacherId) {
+        res.status(400).json({ error: 'teacherId required' });
+        return;
+      }
     }
     const opposite = readerRole === 'teacher' ? 'department-head' : 'teacher';
     await query(

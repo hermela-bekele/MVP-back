@@ -70,6 +70,20 @@ CREATE TABLE IF NOT EXISTS teacher_training_assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_training_assignments_teacher ON teacher_training_assignments(teacher_id);
 
+-- TR-004/TR-005/TR-007: the completion lifecycle. due_date is the HoD-set timeframe;
+-- 'Late' is derived (due_date passed and not yet completed), not stored, since it would
+-- otherwise silently go stale. Completion requires all three of sessions/assessment/
+-- reflection — enforced in the API, not just computed here — so status only ever moves
+-- to 'completed' through that check.
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS sessions_completed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS sessions_total INTEGER;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS assessment_score NUMERIC;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS assessment_passed BOOLEAN;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS reflection_submitted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS reflection_answers JSONB;
+ALTER TABLE teacher_training_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
   student_id TEXT NOT NULL UNIQUE,
@@ -131,6 +145,26 @@ ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS created_by_role TEXT;
 UPDATE lesson_plans SET status = 'Approved'
  WHERE status = 'Pending School Head';
 
+-- TE-004: the annual plan stays the baseline (lesson_plans is never overwritten by a
+-- teacher's change) — every departure from it is logged here instead, distinct from
+-- both the baseline and actual delivery (lesson_deliveries).
+CREATE TABLE IF NOT EXISTS teacher_lesson_adjustments (
+  id TEXT PRIMARY KEY,
+  teacher_id TEXT NOT NULL REFERENCES teachers(id),
+  annual_plan_id TEXT REFERENCES lesson_plans(id),
+  weekly_plan_id TEXT REFERENCES lesson_plans(id),
+  grade TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  original_topic TEXT NOT NULL,
+  revised_topic TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  pacing_impact TEXT,
+  adjustment_date DATE NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_teacher_lesson_adjustments_teacher ON teacher_lesson_adjustments(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_teacher_lesson_adjustments_weekly_plan ON teacher_lesson_adjustments(weekly_plan_id);
+
 CREATE TABLE IF NOT EXISTS assessments (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -146,6 +180,11 @@ CREATE TABLE IF NOT EXISTS assessments (
   created_by_role TEXT NOT NULL DEFAULT 'teacher',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- TE-007: for a Unit Test, which delivered teaching notes (by real ID, not display
+-- name) it covers — lets the teacher and reviewers trace exactly which taught lessons
+-- the test is drawn from instead of an arbitrary/unverified lesson list.
+ALTER TABLE assessments ADD COLUMN IF NOT EXISTS covered_teaching_note_ids JSONB NOT NULL DEFAULT '[]';
 
 ALTER TABLE assessments ADD COLUMN IF NOT EXISTS created_by_role TEXT NOT NULL DEFAULT 'teacher';
 
@@ -167,6 +206,22 @@ CREATE TABLE IF NOT EXISTS attendance (
   status TEXT NOT NULL CHECK (status IN ('Present', 'Absent', 'Late')),
   remarks TEXT
 );
+
+-- TE-002/CM-006: trace attendance back to the teacher who recorded it and, where the
+-- session was scheduled, the timetable slot it belongs to (nullable — ad-hoc attendance
+-- with no matching timetable slot is still allowed).
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS teacher_id TEXT REFERENCES teachers(id);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS timetable_slot_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_attendance_teacher ON attendance(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_timetable_slot ON attendance(timetable_slot_id);
+
+-- CM-006: a student can only have one attendance record per scheduled session
+-- occurrence (the same weekly slot recurs, so the date disambiguates which week).
+-- Checked clean of existing duplicates before adding (see migration notes) — only
+-- applies when a real timetable session is linked; ad-hoc attendance is unaffected.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_attendance_student_slot_date
+  ON attendance(student_id, timetable_slot_id, date)
+  WHERE timetable_slot_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS teacher_trainings (
   id TEXT PRIMARY KEY,
@@ -275,6 +330,10 @@ CREATE TABLE IF NOT EXISTS teaching_notes (
 -- content the teacher actually selected, instead of every session in the linked plan.
 ALTER TABLE teaching_notes ADD COLUMN IF NOT EXISTS session_scope TEXT;
 
+-- TE-005: a note with no lesson_plan_id is a Supplementary/Unplanned Session — an
+-- exception to the normal plan -> note evidence chain, so the teacher must record why.
+ALTER TABLE teaching_notes ADD COLUMN IF NOT EXISTS standalone_reason TEXT;
+
 CREATE TABLE IF NOT EXISTS student_grade_entries (
   id TEXT PRIMARY KEY,
   student_id TEXT REFERENCES students(id),
@@ -296,6 +355,38 @@ CREATE TABLE IF NOT EXISTS student_grade_entries (
 
 ALTER TABLE student_grade_entries ADD COLUMN IF NOT EXISTS question_results JSONB;
 
+-- CM-003: core result data architecture. Every result must be traceable to Student,
+-- Assessment, Teacher, Class, and Date (all already present above except class_id) plus
+-- Question and Curriculum Objective (tracked per-question inside question_results —
+-- see GradeQuestionResult on the frontend — since a single assessment covers many
+-- objectives across its questions, not one per whole assessment).
+ALTER TABLE student_grade_entries ADD COLUMN IF NOT EXISTS class_id TEXT REFERENCES school_classes(id);
+CREATE INDEX IF NOT EXISTS idx_grade_entries_class ON student_grade_entries(class_id);
+-- Backfill from the existing grade_level/section columns where exactly one class matches.
+UPDATE student_grade_entries e
+SET class_id = c.id
+FROM school_classes c
+WHERE e.class_id IS NULL
+  AND c.grade = e.grade_level
+  AND c.section = e.section
+  AND (SELECT count(*) FROM school_classes c2 WHERE c2.grade = e.grade_level AND c2.section = e.section) = 1;
+
+-- CM-003: a real Curriculum Objective entity to tag questions/results against. No
+-- authoring UI exists yet for teachers/HoDs to create or assign these — this table is
+-- the minimal, architecture-consistent scaffold so the traceable relationship exists
+-- and can be populated once that UI is built (logically belongs in the Curriculum
+-- Engine / Head of Academics portal, per the existing engine taxonomy).
+CREATE TABLE IF NOT EXISTS curriculum_objectives (
+  id TEXT PRIMARY KEY,
+  school_id TEXT REFERENCES schools(id),
+  subject TEXT NOT NULL,
+  grade TEXT NOT NULL,
+  code TEXT,
+  description TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_curriculum_objectives_subject_grade ON curriculum_objectives(subject, grade);
+
 CREATE TABLE IF NOT EXISTS teacher_resources (
   id TEXT PRIMARY KEY,
   teacher_id TEXT REFERENCES teachers(id),
@@ -307,6 +398,26 @@ CREATE TABLE IF NOT EXISTS teacher_resources (
   downloads INTEGER NOT NULL DEFAULT 0,
   created_at DATE NOT NULL
 );
+
+-- TE-010: resource approval workflow. The backfill only fires the moment the column is
+-- first created (guarded below) — otherwise re-running this file on every deploy would
+-- silently re-approve any resource still legitimately awaiting review.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'teacher_resources' AND column_name = 'status'
+  ) THEN
+    ALTER TABLE teacher_resources ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'
+      CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'REMOVED'));
+    -- Rows uploaded before this workflow existed were already shared; don't retroactively hide them.
+    UPDATE teacher_resources SET status = 'APPROVED';
+  END IF;
+END $$;
+ALTER TABLE teacher_resources ADD COLUMN IF NOT EXISTS reviewed_by TEXT REFERENCES portal_users(id);
+ALTER TABLE teacher_resources ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE teacher_resources ADD COLUMN IF NOT EXISTS review_comment TEXT;
+CREATE INDEX IF NOT EXISTS idx_teacher_resources_status ON teacher_resources(status);
 
 CREATE TABLE IF NOT EXISTS teacher_feedbacks (
   id TEXT PRIMARY KEY,
@@ -325,6 +436,11 @@ CREATE TABLE IF NOT EXISTS teacher_feedbacks (
 -- from the client but silently dropped on insert, so every row read back after a refresh fell
 -- through to a hardcoded "department-head" guess on the frontend regardless of the real source.
 ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS author_role TEXT;
+
+-- FB-003: distinct feedback categories — never combined into one score. Nullable because
+-- parent-given feedback (a note, not a formal evaluation) doesn't map to any of these.
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS category TEXT
+  CHECK (category IN ('informal_peer', 'coaching', 'classroom_observation', 'formal_performance', 'anonymous_survey'));
 
 CREATE TABLE IF NOT EXISTS parent_messages (
   id TEXT PRIMARY KEY,
@@ -510,6 +626,19 @@ CREATE TABLE IF NOT EXISTS community_channel_reads (
   last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (channel_id, user_id)
 );
+
+-- CO-001: backfill the Curriculum Head (head-of-academics) into every already-seeded
+-- department community as admin — db/seed.ts does this for freshly-seeded schools, but
+-- this keeps environments seeded before that change correct too. Safe to re-run: the
+-- INSERT is a no-op once the membership row exists.
+INSERT INTO community_members (id, community_id, user_id, role)
+SELECT 'cur-head-' || c.id || '-' || pu.id, c.id, pu.id, 'admin'
+FROM communities c
+CROSS JOIN portal_users pu
+WHERE c.type = 'department'
+  AND pu.role = 'head-of-academics'
+  AND (c.school_id IS NULL OR pu.school_id IS NULL OR c.school_id = pu.school_id)
+ON CONFLICT (community_id, user_id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS community_threads (
   id TEXT PRIMARY KEY,

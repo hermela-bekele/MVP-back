@@ -1,4 +1,6 @@
 import { query } from './pool.js';
+import { isPrivilegedStaff } from '../lib/roles.js';
+import type { AuthUser } from '../middleware/auth.js';
 import {
   mapSchool,
   mapDepartment,
@@ -38,7 +40,7 @@ import {
   mapStaffAttendanceRecord,
 } from '../lib/serialize.js';
 
-export async function loadBootstrap() {
+export async function loadBootstrap(caller: AuthUser) {
   const [
     schools,
     departments,
@@ -93,7 +95,10 @@ export async function loadBootstrap() {
     query('SELECT * FROM training_plan_assignments ORDER BY created_at DESC').catch(() => ({ rows: [] })),
     query('SELECT * FROM teaching_notes ORDER BY created_at DESC'),
     query('SELECT * FROM student_grade_entries ORDER BY recorded_at DESC'),
-    query('SELECT * FROM teacher_resources ORDER BY created_at DESC'),
+    // TE-010: /bootstrap is unauthenticated, so it must never leak resources awaiting
+    // (or denied) HoD review to peer teachers/students. A teacher's own non-approved
+    // uploads are fetched separately via the authenticated /teacher-resources/mine route.
+    query("SELECT * FROM teacher_resources WHERE status = 'APPROVED' ORDER BY created_at DESC"),
     query('SELECT * FROM teacher_feedbacks ORDER BY date DESC'),
     query('SELECT * FROM parent_messages ORDER BY sent_at DESC'),
     query('SELECT * FROM teacher_check_in_prompts ORDER BY due_date'),
@@ -125,7 +130,16 @@ export async function loadBootstrap() {
   return {
     schools: schools.rows.map(mapSchool),
     departments: departments.rows.map(mapDepartment),
-    teachers: teachers.rows.map(mapTeacher),
+    // PR-002: a teacher's personal phone is institutional-need-to-know — visible to
+    // privileged staff and to the teacher's own record, masked for everyone else
+    // (parents, students, peer teachers) since /bootstrap is a shared, broad payload.
+    teachers: teachers.rows.map((row) =>
+      mapTeacher(row, {
+        maskPersonalContact:
+          !isPrivilegedStaff(caller.role) &&
+          String(row.email ?? '').toLowerCase() !== caller.email.toLowerCase(),
+      })
+    ),
     students: students.rows.map(mapStudent),
     classes: classes.rows.map(mapSchoolClass),
     lessonPlans: lessonPlans.rows.map(mapLessonPlan),

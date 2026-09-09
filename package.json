@@ -12,7 +12,8 @@
     "db:setup": "npm run db:migrate && npm run db:seed",
     "db:seed:academic-demo": "tsx src/scripts/seedAcademicDemo.ts",
     "db:unseed:academic-demo": "tsx src/scripts/unseedAcademicDemo.ts",
-    "jobs:billing": "tsx src/scripts/runBillingJobs.ts"
+    "jobs:billing": "tsx src/scripts/runBillingJobs.ts",
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@types/cors": "^2.8.19",

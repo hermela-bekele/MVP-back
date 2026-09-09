@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { query } from '../db/pool.js';
 import { requireAuth, requirePermission } from '../middleware/auth.js';
 import { newId } from '../lib/ids.js';
+import { resolveFeedbackAuthorRole, resolveFeedbackCategory } from '../lib/feedback.js';
 
 export const portalRouter = Router();
 
@@ -173,6 +174,30 @@ portalRouter.get(
   })
 );
 
+// CM-006: a teacher's own scheduled sessions, across every grade/section they teach —
+// the real timetable, keyed by teacher_id rather than requiring the caller to already
+// know which grade/section to ask for.
+portalRouter.get(
+  '/timetable/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (req.user!.role !== 'teacher') {
+      res.status(403).json({ error: 'Only teachers have a personal timetable' });
+      return;
+    }
+    const { rows: tch } = await query('SELECT id FROM teachers WHERE LOWER(email) = LOWER($1)', [req.user!.email]);
+    if (!tch.length) {
+      res.json([]);
+      return;
+    }
+    const { rows } = await query(
+      `SELECT * FROM timetable_slots WHERE teacher_id = $1 ORDER BY day_of_week, start_time`,
+      [tch[0].id]
+    );
+    res.json(rows);
+  })
+);
+
 portalRouter.get(
   '/documents',
   requireAuth,
@@ -332,10 +357,21 @@ portalRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const userId = req.user!.id;
+    // CO-002: message_threads has no explicit "kind" column — a thread's counterpart
+    // role is what actually distinguishes a parent conversation from a teacher-peer one
+    // (both just use the same parent_user_id/staff_user_id pair). Resolve both parties'
+    // roles so the frontend can filter Parent Messages vs Peer Messages instead of
+    // showing every thread in both places.
     const { rows } = await query(
-      `SELECT * FROM message_threads
-       WHERE parent_user_id = $1 OR staff_user_id = $1
-       ORDER BY updated_at DESC`,
+      `SELECT t.*,
+              pu.role AS parent_user_role,
+              su.role AS staff_user_role,
+              CASE WHEN t.parent_user_id = $1 THEN su.role ELSE pu.role END AS counterpart_role
+       FROM message_threads t
+       LEFT JOIN portal_users pu ON pu.id = t.parent_user_id
+       LEFT JOIN portal_users su ON su.id = t.staff_user_id
+       WHERE t.parent_user_id = $1 OR t.staff_user_id = $1
+       ORDER BY t.updated_at DESC`,
       [userId]
     );
     res.json(rows);
@@ -397,22 +433,32 @@ portalRouter.post(
   })
 );
 
+// FB-002/FB-003: this route only ever writes 'to_teacher' feedback (a teacher's own
+// notes about a student/parent go through the separate /teacher-feedbacks route).
+// author_role records the real evidence source and category — both derived from the
+// caller's authenticated role (see lib/feedback.ts), never trusted from the client.
 portalRouter.post(
   '/feedback',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const authorRole = resolveFeedbackAuthorRole(req.user!.role);
+    if (!authorRole) {
+      res.status(403).json({ error: 'Your role cannot give teacher feedback' });
+      return;
+    }
+    const category = resolveFeedbackCategory(authorRole, req.body.category);
     const id = newId('tfb');
     await query(
-      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, subject, comment, rating, date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_DATE)`,
+      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, category, subject, comment, rating, date)
+       VALUES ($1,$2,$3,$4,'to_teacher',$5,$6,$7,$8,$9,$10,CURRENT_DATE)`,
       [
         id,
         req.body.teacherId,
         req.body.studentId ?? null,
         req.body.studentName ?? null,
-        req.body.direction || 'to-teacher',
         req.user!.displayName,
-        req.body.authorRole ?? null,
+        authorRole,
+        category,
         req.body.subject || 'General',
         req.body.comment,
         req.body.rating ?? null,

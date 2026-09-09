@@ -1,5 +1,7 @@
 /** Map PostgreSQL snake_case rows to frontend camelCase shapes */
 
+import { isAnonymousFeedback } from './feedback.js';
+
 export function mapSchool(row: Record<string, unknown>) {
   return {
     id: row.id,
@@ -29,12 +31,14 @@ export function mapDepartment(row: Record<string, unknown>) {
   };
 }
 
-export function mapTeacher(row: Record<string, unknown>) {
+export function mapTeacher(row: Record<string, unknown>, options?: { maskPersonalContact?: boolean }) {
   return {
     id: row.id,
     name: row.name,
     email: row.email,
-    phone: row.phone,
+    // PR-002: phone is personal contact info, not institutional — omitted for
+    // any caller other than the teacher themselves or privileged staff.
+    phone: options?.maskPersonalContact ? null : row.phone,
     departmentId: row.department_id,
     schoolId: row.school_id,
     status: row.status,
@@ -60,8 +64,23 @@ export function mapTeacherSelfAssessment(row: Record<string, unknown>) {
   };
 }
 
+// TR-005: "Late" is derived, not stored — a due date that's passed without completion
+// would otherwise require a background job to keep the stored status truthful. `today`
+// is injectable (defaults to now) so this stays deterministic to test.
+export function isTrainingAssignmentOverdue(
+  status: string,
+  dueDateStr: string | undefined,
+  today: Date = new Date(),
+): boolean {
+  return status !== 'completed' && !!dueDateStr && dueDateStr < today.toISOString().split('T')[0];
+}
+
 export function mapTeacherTrainingAssignment(row: Record<string, unknown>) {
   const d = row.created_at;
+  const due = row.due_date;
+  const dueDateStr = due instanceof Date ? due.toISOString().split('T')[0] : (due as string | null) ?? undefined;
+  const completedAt = row.completed_at;
+  const overdue = isTrainingAssignmentOverdue(String(row.status ?? ''), dueDateStr);
   return {
     id: row.id,
     teacherId: row.teacher_id,
@@ -71,6 +90,15 @@ export function mapTeacherTrainingAssignment(row: Record<string, unknown>) {
     assignedByName: row.assigned_by_name,
     reason: row.reason ?? undefined,
     status: row.status,
+    dueDate: dueDateStr,
+    sessionsCompleted: Number(row.sessions_completed ?? 0),
+    sessionsTotal: row.sessions_total != null ? Number(row.sessions_total) : undefined,
+    assessmentScore: row.assessment_score != null ? Number(row.assessment_score) : undefined,
+    assessmentPassed: row.assessment_passed ?? undefined,
+    reflectionSubmitted: Boolean(row.reflection_submitted),
+    reflectionAnswers: row.reflection_answers ?? undefined,
+    completedAt: completedAt instanceof Date ? completedAt.toISOString() : (completedAt as string | null) ?? undefined,
+    overdue,
     createdAt: d instanceof Date ? d.toISOString() : String(d),
   };
 }
@@ -140,6 +168,25 @@ export function mapLessonPlan(row: Record<string, unknown>) {
   };
 }
 
+export function mapTeacherLessonAdjustment(row: Record<string, unknown>) {
+  const d = row.adjustment_date;
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    annualPlanId: row.annual_plan_id ?? undefined,
+    weeklyPlanId: row.weekly_plan_id ?? undefined,
+    grade: row.grade,
+    subject: row.subject,
+    originalTopic: row.original_topic,
+    revisedTopic: row.revised_topic,
+    reason: row.reason,
+    pacingImpact: row.pacing_impact ?? undefined,
+    adjustmentDate: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
+    createdAt:
+      row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+}
+
 export function mapAssessment(row: Record<string, unknown>) {
   return {
     id: row.id,
@@ -153,6 +200,7 @@ export function mapAssessment(row: Record<string, unknown>) {
     comments: row.comments ?? undefined,
     difficulty: row.difficulty,
     questions: row.questions ?? [],
+    coveredTeachingNoteIds: row.covered_teaching_note_ids ?? [],
     createdByRole: (row.created_by_role as string) || 'teacher',
     createdAt:
       row.created_at instanceof Date
@@ -172,6 +220,8 @@ export function mapAttendance(row: Record<string, unknown>) {
     date: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
     status: row.status,
     remarks: row.remarks ?? undefined,
+    teacherId: row.teacher_id ?? undefined,
+    timetableSlotId: row.timetable_slot_id ?? undefined,
   };
 }
 
@@ -313,6 +363,7 @@ export function mapTeachingNote(row: Record<string, unknown>) {
     status: row.status,
     deptComments: row.dept_comments ?? undefined,
     sessionScope: row.session_scope ?? undefined,
+    standaloneReason: row.standalone_reason ?? undefined,
     createdAt:
       created instanceof Date ? created.toISOString().split('T')[0] : String(created),
     updatedAt: updated
@@ -351,11 +402,13 @@ export function mapStudentGradeEntry(row: Record<string, unknown>) {
     remarks: row.remarks ?? undefined,
     published: Boolean(row.published),
     questionResults: Array.isArray(questionResults) ? questionResults : undefined,
+    classId: row.class_id ?? undefined,
   };
 }
 
 export function mapTeacherResource(row: Record<string, unknown>) {
   const d = row.created_at;
+  const reviewedAt = row.reviewed_at;
   return {
     id: row.id,
     teacherId: row.teacher_id,
@@ -366,11 +419,23 @@ export function mapTeacherResource(row: Record<string, unknown>) {
     url: row.url,
     downloads: Number(row.downloads),
     createdAt: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
+    status: row.status ?? 'PENDING',
+    reviewedBy: row.reviewed_by ?? undefined,
+    reviewedAt: reviewedAt instanceof Date ? reviewedAt.toISOString() : (reviewedAt ?? undefined),
+    reviewComment: row.review_comment ?? undefined,
   };
 }
 
 export function mapTeacherFeedback(row: Record<string, unknown>) {
   const d = row.date;
+  // FB-002: anonymity is allowed ONLY for student-authored feedback, and that must be
+  // enforced here — at the API boundary — not merely hidden by the frontend, or the
+  // real name would still be visible in the raw network response. Peer/parent/HoD
+  // feedback is never anonymized; its real author_name is always returned as-is.
+  const isAnonymousStudentFeedback = isAnonymousFeedback(
+    String(row.direction ?? ''),
+    row.author_role as string | null | undefined,
+  );
   return {
     id: row.id,
     teacherId: row.teacher_id,
@@ -378,7 +443,9 @@ export function mapTeacherFeedback(row: Record<string, unknown>) {
     studentName: row.student_name ?? undefined,
     direction: row.direction,
     authorRole: row.author_role ?? undefined,
-    authorName: row.author_name,
+    authorName: isAnonymousStudentFeedback ? 'Anonymous Student' : row.author_name,
+    isAnonymous: isAnonymousStudentFeedback,
+    category: row.category ?? undefined,
     subject: row.subject,
     comment: row.comment,
     rating: row.rating != null ? Number(row.rating) : undefined,

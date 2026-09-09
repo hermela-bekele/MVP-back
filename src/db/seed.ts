@@ -661,6 +661,20 @@ async function seed() {
           [`${opts.id}-mem-${u.id}`, opts.id, u.id, role]
         );
       }
+      // CO-001: the Curriculum Head (head-of-academics) isn't scoped to one department,
+      // but oversees curriculum across all of them — so they belong in every department
+      // community, not just the school-wide general one.
+      const { rows: curriculumHeads } = await query<{ id: string }>(
+        `SELECT id FROM portal_users WHERE school_id = $1 AND role = 'head-of-academics'`,
+        [schoolId]
+      );
+      for (const u of curriculumHeads) {
+        await query(
+          `INSERT INTO community_members (id, community_id, user_id, role)
+           VALUES ($1,$2,$3,'admin') ON CONFLICT DO NOTHING`,
+          [`${opts.id}-mem-${u.id}`, opts.id, u.id]
+        );
+      }
     }
 
     // Welcome message in #general

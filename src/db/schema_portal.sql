@@ -281,6 +281,39 @@ CREATE TABLE IF NOT EXISTS timetable_slots (
   room TEXT
 );
 
+-- TE-002: a real teacher relationship, not just the free-text teacher_name display
+-- field. Backfilled by matching teacher_name against teachers.name within the same
+-- school; slots that don't match (e.g. stale/typo'd names) are left null rather than
+-- guessed at.
+ALTER TABLE timetable_slots ADD COLUMN IF NOT EXISTS teacher_id TEXT REFERENCES teachers(id);
+CREATE INDEX IF NOT EXISTS idx_timetable_slots_teacher ON timetable_slots(teacher_id);
+UPDATE timetable_slots ts
+SET teacher_id = t.id
+FROM teachers t
+WHERE ts.teacher_id IS NULL
+  AND t.school_id = ts.school_id
+  AND LOWER(t.name) = LOWER(ts.teacher_name);
+
+-- CM-006: attendance.timetable_slot_id (added in schema.sql, before this table existed)
+-- must actually point at a real scheduled session — enforce it here now that
+-- timetable_slots exists. Null out any stale/orphaned value first so the constraint
+-- can never fail to apply on an existing database.
+UPDATE attendance SET timetable_slot_id = NULL
+ WHERE timetable_slot_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM timetable_slots ts WHERE ts.id = attendance.timetable_slot_id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'attendance_timetable_slot_id_fkey'
+  ) THEN
+    ALTER TABLE attendance
+      ADD CONSTRAINT attendance_timetable_slot_id_fkey
+      FOREIGN KEY (timetable_slot_id) REFERENCES timetable_slots(id);
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS student_documents (
   id TEXT PRIMARY KEY,
   school_id TEXT NOT NULL REFERENCES schools(id),
