@@ -86,6 +86,7 @@ export interface LessonPlan {
   status: 'Draft' | 'Pending Dept Head' | 'Pending School Head' | 'Approved' | 'Rejected';
   deptComments?: string;
   schoolHeadComments?: string;
+  returnReasonCategory?: 'curriculum_alignment' | 'pacing' | 'pedagogy' | 'assessment' | 'differentiation' | 'resource_issue';
   version: number;
   objectives: string[];
   activities: { session: number; activity: string; duration: string }[];
@@ -102,10 +103,15 @@ export interface Assessment {
   grade: string;
   teacherId: string;
   teacherName: string;
-  status: 'Draft' | 'Pending Dept Head' | 'Approved' | 'Rejected';
+  status: 'Draft' | 'Pending Dept Head' | 'Pending Reviewer' | 'Approved' | 'Rejected';
   comments?: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   questions: { id: number; question: string; type: string; options?: string[]; answer: string }[];
+  moderationRubric?: Partial<Record<
+    'curriculumAlignment' | 'cognitiveLevel' | 'clarity' | 'difficulty' | 'coverage' | 'fairness' | 'answerKey' | 'appropriateness',
+    'meets' | 'needs_improvement' | 'not_applicable'
+  >>;
+  reviewDepartmentId?: string;
   createdAt: string;
 }
 
@@ -118,6 +124,8 @@ export interface Attendance {
   date: string;
   status: 'Present' | 'Absent' | 'Late';
   remarks?: string;
+  teacherId?: string;
+  timetableSlotId?: string;
 }
 
 export interface TeacherTraining {
@@ -982,7 +990,16 @@ export interface TeacherResource {
   id: string;
   teacherId: string;
   title: string;
-  type: 'Worksheet' | 'Slide Deck' | 'Lab Guide' | 'Reference PDF' | 'Video Link';
+  type:
+    | 'Worksheet'
+    | 'Slide Deck'
+    | 'Lab Guide'
+    | 'Reference PDF'
+    | 'Video Link'
+    | 'Teaching Material'
+    | 'Guide Book'
+    | 'Syllabus'
+    | 'Textbook';
   grade: string;
   subject: string;
   url: string;
@@ -1000,10 +1017,16 @@ export interface TeacherFeedback {
    * (teacher-authored) is addressed to. */
   authorRole?: 'student' | 'parent' | 'peer' | 'department-head';
   authorName: string;
+  category?: 'informal_peer' | 'coaching' | 'classroom_observation' | 'formal_performance' | 'anonymous_survey';
   subject: string;
   comment: string;
   rating?: number;
   date: string;
+  strength?: string;
+  developmentArea?: string;
+  agreedAction?: string;
+  followUpRequired?: boolean;
+  followUpDueDate?: string;
 }
 
 export interface ParentMessage {
@@ -1380,7 +1403,7 @@ export const mockTeacherCheckInPrompts: TeacherCheckInPrompt[] = [
   {
     id: 'tcp-2',
     title: 'Instructional Delivery Reflection',
-    type: 'Student Satisfaction',
+    type: 'Teacher Reflection',
     dueDate: '2026-05-30',
     teacherResponse: 'Students were highly engaged during the genetics practicum; pacing on session 3 could improve.',
     respondedAt: '2026-05-22',

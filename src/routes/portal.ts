@@ -469,9 +469,12 @@ portalRouter.post(
     }
     const category = resolveFeedbackCategory(authorRole, req.body.category);
     const id = newId('tfb');
+    // FB-004: structured fields only ever come from a department head's direct feedback —
+    // peer/parent/student/anonymous-survey rows leave them null regardless of what's sent.
+    const isStructured = authorRole === 'department-head';
     await query(
-      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, category, subject, comment, rating, date)
-       VALUES ($1,$2,$3,$4,'to_teacher',$5,$6,$7,$8,$9,$10,CURRENT_DATE)`,
+      `INSERT INTO teacher_feedbacks (id, teacher_id, student_id, student_name, direction, author_name, author_role, category, subject, comment, rating, date, strength, development_area, agreed_action, follow_up_required, follow_up_due_date)
+       VALUES ($1,$2,$3,$4,'to_teacher',$5,$6,$7,$8,$9,$10,CURRENT_DATE,$11,$12,$13,$14,$15)`,
       [
         id,
         req.body.teacherId,
@@ -483,6 +486,11 @@ portalRouter.post(
         req.body.subject || 'General',
         req.body.comment,
         req.body.rating ?? null,
+        isStructured ? req.body.strength ?? null : null,
+        isStructured ? req.body.developmentArea ?? null : null,
+        isStructured ? req.body.agreedAction ?? null : null,
+        isStructured ? Boolean(req.body.followUpRequired) : false,
+        isStructured && req.body.followUpRequired ? req.body.followUpDueDate ?? null : null,
       ]
     );
     res.status(201).json({ id });

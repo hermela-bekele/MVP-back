@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+﻿import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query, withTransaction } from '../db/pool.js';
@@ -119,7 +119,7 @@ async function resolveOwnTeacherId(user: { role: string; email: string }): Promi
 }
 
 /** For self-service actions (a teacher recording their own delivery, resource, feedback,
- * etc.) — never trusts a client-supplied teacherId, always resolves it from the
+ * etc.) ΓÇö never trusts a client-supplied teacherId, always resolves it from the
  * authenticated session. */
 async function requireOwnTeacherId(req: Request, res: Response): Promise<string | null> {
   const user = req.user!;
@@ -220,7 +220,13 @@ apiRouter.post('/uploads', requireAuth, (req, res) => {
       res.status(400).json({ error: 'No file uploaded' });
       return;
     }
-    const url = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    // A relative path, not an absolute host:port URL — the host that happened to handle
+    // this specific upload request isn't necessarily reachable later (a local dev backend
+    // can move ports across restarts, sit behind a relay, or the app can simply be
+    // redeployed) which used to bake a URL that would later fail with "connection
+    // refused". The frontend resolves this against whichever backend is currently
+    // configured (see resolveResourceUrl in lib/api.ts).
+    const url = `/uploads/${req.file.filename}`;
     res.status(201).json({
       url,
       filename: req.file.filename,
@@ -480,7 +486,7 @@ apiRouter.post(
       'UPDATE portal_users SET password_hash = $1, password = NULL WHERE id = $2',
       [passwordHash, req.user!.id]
     );
-    // A password change is a security event — sign out every other device.
+    // A password change is a security event ΓÇö sign out every other device.
     await query(
       'UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL AND id != $2',
       [req.user!.id, req.user!.sessionId ?? '']
@@ -540,7 +546,7 @@ apiRouter.post(
   })
 );
 
-// Regions — MOE's authoritative catalog of region names schools are connected under.
+// Regions ΓÇö MOE's authoritative catalog of region names schools are connected under.
 apiRouter.get(
   '/regions',
   requireAuth,
@@ -608,9 +614,9 @@ function generateTemporaryPassword(): string {
   return crypto.randomBytes(9).toString('base64url');
 }
 
-// School Connect/Activate — replaces the old free-form "Register School" flow.
+// School Connect/Activate ΓÇö replaces the old free-form "Register School" flow.
 // MOE searches/enters the institution's details (no live EMIS registry exists yet
-// — see emis_id/registry_source schema notes), activates its PRIME participation,
+// ΓÇö see emis_id/registry_source schema notes), activates its PRIME participation,
 // and assigns the platform administrator in one step.
 apiRouter.post(
   '/schools/connect',
@@ -629,7 +635,7 @@ apiRouter.post(
     }
     const { rows: regionRows } = await query('SELECT id FROM regions WHERE LOWER(name) = LOWER($1)', [body.region]);
     if (!regionRows.length) {
-      res.status(400).json({ error: 'Unknown region — add it to the region catalog first' });
+      res.status(400).json({ error: 'Unknown region ΓÇö add it to the region catalog first' });
       return;
     }
     const { rows: dupes } = await query(
@@ -661,7 +667,7 @@ apiRouter.post(
     await withTransaction(async (client) => {
       await client.query(
         `INSERT INTO schools (id, code, name, region, type, principal, email, phone, capacity, students_count, teachers_count, status, gps, registry_source, emis_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,'Active','9.0320° N, 38.7489° E',$10,$11)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,'Active','9.0320┬░ N, 38.7489┬░ E',$10,$11)`,
         [schoolId, code, body.name, body.region, body.type, body.principal, body.email, body.phone ?? '', body.capacity ?? 0, body.emisId ? 'emis' : 'manual', body.emisId ?? null]
       );
       await client.query(
@@ -695,7 +701,7 @@ apiRouter.post(
   })
 );
 
-// Deliberate connection-lifecycle action (from the "Manage Connection" dialog) —
+// Deliberate connection-lifecycle action (from the "Manage Connection" dialog) ΓÇö
 // not a blunt one-click table toggle, since disconnecting a school from PRIME
 // participation is a significant, auditable decision.
 apiRouter.patch(
@@ -836,7 +842,7 @@ apiRouter.put(
 );
 
 // School Administration > Data & Privacy: a real, school-scoped export of the
-// institution's own core records (not a fabricated "email sent" confirmation —
+// institution's own core records (not a fabricated "email sent" confirmation ΓÇö
 // the caller downloads the actual data).
 apiRouter.get(
   '/schools/:id/data-export',
@@ -865,7 +871,7 @@ apiRouter.get(
   })
 );
 
-// Teachers — creating/editing a teacher record touches personal contact info
+// Teachers ΓÇö creating/editing a teacher record touches personal contact info
 // (email/phone), so only privileged institutional staff may do it server-side.
 function requirePrivilegedStaff(req: Request, res: Response): boolean {
   if (!req.user || !isPrivilegedStaff(req.user.role)) {
@@ -894,7 +900,7 @@ apiRouter.post(
   })
 );
 
-// Fields a teacher may change on their own record via self-service settings —
+// Fields a teacher may change on their own record via self-service settings ΓÇö
 // everything else (department, status, subjects, experienceOverride, ...) is an
 // institutional decision reserved for privileged staff.
 const TEACHER_SELF_EDIT_FIELDS = new Set(['name', 'email', 'phone', 'yearsOfExperience']);
@@ -937,7 +943,7 @@ apiRouter.patch(
         vals.push(b[k]);
       }
     }
-    // experienceOverride is nullable — 'new' | 'experienced' | null clears the manual override.
+    // experienceOverride is nullable ΓÇö 'new' | 'experienced' | null clears the manual override.
     if ('experienceOverride' in b) {
       fields.push(`experience_override = $${i++}`);
       vals.push(b.experienceOverride ?? null);
@@ -1153,8 +1159,8 @@ apiRouter.post(
       `Departure notice for ${teachers[0].name} (${schools[0].name}).`,
       `Reason: ${b.reason}. Departure date: ${b.departureDate}.`,
       b.notes ? `Notes: ${b.notes}` : null,
-      `Subjects needed: ${subjectsNeeded.join(', ') || '—'}.`,
-      `Grade levels needed: ${gradeLevelsNeeded.join(', ') || '—'}.`,
+      `Subjects needed: ${subjectsNeeded.join(', ') || 'ΓÇö'}.`,
+      `Grade levels needed: ${gradeLevelsNeeded.join(', ') || 'ΓÇö'}.`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -1494,7 +1500,7 @@ apiRouter.post(
     if (!teacherId) return;
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
     const id = `lp-${Date.now()}`;
-    // A teacher account cannot self-approve by passing status/createdByRole in the body —
+    // A teacher account cannot self-approve by passing status/createdByRole in the body ΓÇö
     // only privileged staff (who legitimately author plans that publish immediately) may.
     const createdByRole = req.user!.role;
     const status = isPrivilegedStaff(createdByRole)
@@ -1577,11 +1583,17 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { role, comments } = req.body as { role: 'dept' | 'school'; comments: string };
+    const { role, comments, returnReasonCategory } = req.body as {
+      role: 'dept' | 'school';
+      comments: string;
+      returnReasonCategory?: string;
+    };
     await query(
       `UPDATE lesson_plans SET status = 'Rejected', dept_comments = CASE WHEN $1 = 'dept' THEN $2 ELSE dept_comments END,
-       school_head_comments = CASE WHEN $1 = 'school' THEN $2 ELSE school_head_comments END, version = version + 1 WHERE id = $3`,
-      [role, comments, req.params.id]
+       school_head_comments = CASE WHEN $1 = 'school' THEN $2 ELSE school_head_comments END,
+       return_reason_category = CASE WHEN $1 = 'dept' THEN $4 ELSE return_reason_category END,
+       version = version + 1 WHERE id = $3`,
+      [role, comments, req.params.id, role === 'dept' ? returnReasonCategory ?? null : null]
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
     res.json(mapLessonPlan(rows[0]));
@@ -1655,7 +1667,7 @@ apiRouter.patch(
     if (!(await assertOwnsTeacherRow(req, res, curOwner[0].teacher_id as string | null))) return;
     const b = req.body as Record<string, unknown>;
     // createdByRole and status both gate the approval workflow (see POST /lesson-plans and
-    // /lesson-plans/:id/approve) — an owning teacher must never be able to set either
+    // /lesson-plans/:id/approve) ΓÇö an owning teacher must never be able to set either
     // directly here, or they could forge "authored by department-head" / self-approve.
     if ((b.createdByRole !== undefined || b.status !== undefined) && !isPrivilegedStaff(req.user!.role)) {
       res.status(403).json({ error: 'Only department/school/academic leadership may set plan status or authorship' });
@@ -1738,7 +1750,7 @@ apiRouter.delete(
   }),
 );
 
-// TE-004: Teacher Adjustments — every departure from the annual plan is logged here
+// TE-004: Teacher Adjustments ΓÇö every departure from the annual plan is logged here
 // rather than overwriting it. The annual plan (lesson_plans) stays the untouched
 // baseline; this table is the record of what changed, why, and its pacing impact.
 apiRouter.post(
@@ -1799,7 +1811,7 @@ apiRouter.post(
     const b = req.body;
     const teacherId = await resolveActingTeacherId(req, res, b.teacherId);
     if (!teacherId) return;
-    // Derived from the session, not the request body — a teacher account cannot claim
+    // Derived from the session, not the request body ΓÇö a teacher account cannot claim
     // 'department-head' to short-circuit assessmentInitialStatus's auto-approve path.
     const createdByRole = req.user!.role;
     const { rows: tch } = await query('SELECT name FROM teachers WHERE id = $1', [teacherId]);
@@ -1808,11 +1820,48 @@ apiRouter.post(
       (createdByRole === 'department-head' ? b.authorName : null) ||
       tch[0]?.name ||
       'Teacher';
-    const status = assessmentInitialStatus(String(b.type), createdByRole);
+    const isExamType = b.type === 'Mid Exam' || b.type === 'Final Exam';
+
+    // A designated reviewer acts with HoD authority for the department(s) they review —
+    // never trust a client-asserted department, only a verified assessment_reviewers row.
+    let verifiedReviewerDeptId: string | null = null;
+    if (isExamType && createdByRole === 'teacher' && typeof b.reviewDepartmentId === 'string') {
+      const { rows: reviewerCheck } = await query(
+        `SELECT 1 FROM assessment_reviewers WHERE department_id = $1 AND teacher_id = $2`,
+        [b.reviewDepartmentId, teacherId]
+      );
+      if (reviewerCheck.length) verifiedReviewerDeptId = b.reviewDepartmentId;
+    }
+
+    let status = assessmentInitialStatus(
+      String(b.type),
+      verifiedReviewerDeptId ? 'department-head' : createdByRole
+    );
     const id = `asm-${Date.now()}`;
 
+    // Reviewer gate: a department head's (or a designated reviewer's) Mid/Final Exam
+    // starts life visible only to that department's reviewers + the HoD, not the whole
+    // department, whenever that department actually has reviewers assigned. With no
+    // reviewers assigned, behavior is unchanged from before this feature existed.
+    let reviewDepartmentId: string | null = null;
+    if (isExamType && status === 'Approved') {
+      if (createdByRole === 'department-head') {
+        reviewDepartmentId = req.user!.departmentId ?? null;
+      } else if (verifiedReviewerDeptId) {
+        reviewDepartmentId = verifiedReviewerDeptId;
+      }
+
+      if (reviewDepartmentId) {
+        const { rows: reviewerRows } = await query(
+          `SELECT 1 FROM assessment_reviewers WHERE department_id = $1 LIMIT 1`,
+          [reviewDepartmentId]
+        );
+        if (reviewerRows.length > 0) status = 'Pending Reviewer';
+      }
+    }
+
     // TE-007: for a Unit Test, only IDs of teaching notes this teacher actually
-    // delivered (a real lesson_deliveries row exists) may be attached as coverage —
+    // delivered (a real lesson_deliveries row exists) may be attached as coverage ΓÇö
     // never an arbitrary/unverified list.
     let coveredTeachingNoteIds: string[] = [];
     if (String(b.type) === 'Unit Test' && Array.isArray(b.coveredTeachingNoteIds)) {
@@ -1829,8 +1878,8 @@ apiRouter.post(
     }
 
     await query(
-      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_by_role, covered_teaching_note_ids, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())`,
+      `INSERT INTO assessments (id, title, type, subject, grade, teacher_id, teacher_name, status, difficulty, questions, created_by_role, covered_teaching_note_ids, review_department_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())`,
       [
         id,
         b.title,
@@ -1844,9 +1893,17 @@ apiRouter.post(
         JSON.stringify(b.questions ?? []),
         createdByRole,
         JSON.stringify(coveredTeachingNoteIds),
+        reviewDepartmentId,
       ]
     );
-    if (status === 'Approved') {
+    if (status === 'Pending Reviewer') {
+      await insertNotification(
+        'Exam ready for review',
+        `"${b.title}" (${b.type}) needs your review before it's shared with the rest of the department.`,
+        'request',
+        '/dashboard/teacher/assessments'
+      );
+    } else if (status === 'Approved') {
       await insertNotification(
         'Assessment ready',
         `"${b.title}" is ready to link in the gradebook.`,
@@ -1865,6 +1922,234 @@ apiRouter.post(
     }
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [id]);
     res.status(201).json(mapAssessment(rows[0]));
+  })
+);
+
+
+// TE-011: HoD (or a reviewer, since they act with HoD authority for this department)
+// disseminates a Mid/Final Exam that's been sitting in Pending Reviewer status, making
+// it visible to the rest of the department's teachers.
+apiRouter.patch(
+  '/assessments/:id/disseminate',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows: cur } = await query(
+      'SELECT status, review_department_id FROM assessments WHERE id = $1',
+      [req.params.id]
+    );
+    if (!cur.length) {
+      res.status(404).json({ error: 'Assessment not found' });
+      return;
+    }
+    if (cur[0].status !== 'Pending Reviewer') {
+      res.status(400).json({ error: 'This assessment is not awaiting dissemination' });
+      return;
+    }
+    const departmentId = cur[0].review_department_id as string | null;
+    const user = req.user!;
+    const isDeptHeadOfThis = user.role === 'department-head' && user.departmentId === departmentId;
+    let isReviewerOfThis = false;
+    if (!isDeptHeadOfThis && user.role === 'teacher' && departmentId) {
+      const teacherId = await resolveOwnTeacherId(user);
+      if (teacherId) {
+        const { rows: reviewerCheck } = await query(
+          `SELECT 1 FROM assessment_reviewers WHERE department_id = $1 AND teacher_id = $2`,
+          [departmentId, teacherId]
+        );
+        isReviewerOfThis = reviewerCheck.length > 0;
+      }
+    }
+    if (!isDeptHeadOfThis && !isReviewerOfThis) {
+      res.status(403).json({ error: 'Only the department head or a designated reviewer can disseminate this exam' });
+      return;
+    }
+    await query(`UPDATE assessments SET status = 'Approved' WHERE id = $1`, [req.params.id]);
+    const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
+    await insertNotification(
+      'Exam published to teachers',
+      `"${rows[0].title}" is now live for subject teachers.`,
+      'success',
+      '/dashboard/teacher/assessments'
+    );
+    res.json(mapAssessment(rows[0]));
+  })
+);
+
+// Which department(s) a department head has opened up to reviewer teachers, and who
+// those reviewers currently are. A reviewer both sees Mid/Final Exams pending review
+// for that department AND can generate new ones themselves (acting as the HoD would).
+apiRouter.get(
+  '/assessment-reviewers',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const departmentId = (req.query.departmentId as string) || req.user!.departmentId;
+    if (!departmentId) {
+      res.json([]);
+      return;
+    }
+    const { rows } = await query(
+      `SELECT ar.*, t.name AS teacher_name, t.email AS teacher_email
+       FROM assessment_reviewers ar
+       JOIN teachers t ON t.id = ar.teacher_id
+       WHERE ar.department_id = $1
+       ORDER BY t.name`,
+      [departmentId]
+    );
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        departmentId: r.department_id,
+        teacherId: r.teacher_id,
+        teacherName: r.teacher_name,
+        teacherEmail: r.teacher_email,
+        createdAt: r.created_at,
+      }))
+    );
+  })
+);
+
+// Every department this teacher is a designated reviewer for — used to unlock Mid/Final
+// Exam generation and the review queue in the teacher portal.
+apiRouter.get(
+  '/assessment-reviewers/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const teacherId = await requireOwnTeacherId(req, res);
+    if (!teacherId) return;
+    const { rows } = await query(
+      `SELECT ar.department_id, d.name AS department_name, d.subjects_count
+       FROM assessment_reviewers ar
+       JOIN departments d ON d.id = ar.department_id
+       WHERE ar.teacher_id = $1`,
+      [teacherId]
+    );
+    res.json(rows.map((r) => ({ departmentId: r.department_id, departmentName: r.department_name })));
+  })
+);
+
+// HoD sets the full reviewer list for their own department (replace semantics — simpler
+// and safer than incremental add/remove for a small, infrequently-changed list). Ensures
+// the "Reviewers community" exists and keeps its membership in sync with the grant.
+apiRouter.post(
+  '/assessment-reviewers',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (req.user!.role !== 'department-head') {
+      res.status(403).json({ error: 'Only a department head can set assessment reviewers' });
+      return;
+    }
+    const departmentId = req.user!.departmentId;
+    if (!departmentId) {
+      res.status(400).json({ error: 'Your account has no department on record' });
+      return;
+    }
+    const teacherIds: string[] = Array.isArray(req.body.teacherIds)
+      ? req.body.teacherIds.filter((x: unknown) => typeof x === 'string')
+      : [];
+
+    const { rows: existing } = await query(
+      `SELECT teacher_id FROM assessment_reviewers WHERE department_id = $1`,
+      [departmentId]
+    );
+    const existingIds = new Set(existing.map((r) => r.teacher_id as string));
+    const nextIds = new Set(teacherIds);
+    const toAdd = teacherIds.filter((id) => !existingIds.has(id));
+    const toRemove = [...existingIds].filter((id) => !nextIds.has(id));
+
+    for (const teacherId of toAdd) {
+      await query(
+        `INSERT INTO assessment_reviewers (id, department_id, teacher_id, granted_by)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (department_id, teacher_id) DO NOTHING`,
+        [newId('arev'), departmentId, teacherId, req.user!.id]
+      );
+    }
+    if (toRemove.length) {
+      await query(
+        `DELETE FROM assessment_reviewers WHERE department_id = $1 AND teacher_id = ANY($2::text[])`,
+        [departmentId, toRemove]
+      );
+    }
+
+    // Ensure the department's "Reviewers community" exists once there's at least one
+    // reviewer, and keep its membership in sync with the grant.
+    if (toAdd.length > 0) {
+      const { rows: deptRows } = await query('SELECT name FROM departments WHERE id = $1', [departmentId]);
+      const { rows: existingCommunity } = await query(
+        `SELECT id FROM communities WHERE type = 'reviewers' AND department_id = $1`,
+        [departmentId]
+      );
+      let communityId = existingCommunity[0]?.id as string | undefined;
+      if (!communityId) {
+        communityId = newId('rvwc');
+        await query(
+          `INSERT INTO communities (id, school_id, name, description, type, department_id, created_by)
+           VALUES ($1,$2,$3,$4,'reviewers',$5,$6)`,
+          [
+            communityId,
+            req.user!.schoolId ?? null,
+            'Reviewers community',
+            'Assessment reviewers for this department, plus the department head.',
+            departmentId,
+            req.user!.id,
+          ]
+        );
+        await query(
+          `INSERT INTO community_channels (id, community_id, name, description, type, position)
+           VALUES ($1,$2,'general','General discussion','text',0)`,
+          [`${communityId}-ch-gen`, communityId]
+        );
+      }
+      // The granting HoD is always a member (admin), plus every currently-added reviewer.
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,'admin')
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), communityId, req.user!.id]
+      );
+      for (const teacherId of toAdd) {
+        const { rows: teacherUser } = await query(
+          `SELECT pu.id FROM teachers t JOIN portal_users pu ON LOWER(pu.email) = LOWER(t.email) WHERE t.id = $1`,
+          [teacherId]
+        );
+        if (teacherUser[0]?.id) {
+          await query(
+            `INSERT INTO community_members (id, community_id, user_id, role)
+             VALUES ($1,$2,$3,'member')
+             ON CONFLICT (community_id, user_id) DO NOTHING`,
+            [newId('cmem'), communityId, teacherUser[0].id]
+          );
+        }
+        await insertNotification(
+          'You were added as an exam reviewer',
+          `You can now review Mid/Final Exams for ${deptRows[0]?.name ?? 'your department'} and generate them yourself.`,
+          'info',
+          '/dashboard/teacher/assessments'
+        );
+      }
+    }
+    // Removed reviewers lose their generate/review access immediately (enforced by the
+    // assessment_reviewers row being gone); leaving them in the community chat itself is
+    // a lower-stakes, reversible byproduct we don't force-clean here.
+
+    const { rows } = await query(
+      `SELECT ar.*, t.name AS teacher_name, t.email AS teacher_email
+       FROM assessment_reviewers ar
+       JOIN teachers t ON t.id = ar.teacher_id
+       WHERE ar.department_id = $1
+       ORDER BY t.name`,
+      [departmentId]
+    );
+    res.status(201).json(
+      rows.map((r) => ({
+        id: r.id,
+        departmentId: r.department_id,
+        teacherId: r.teacher_id,
+        teacherName: r.teacher_name,
+        teacherEmail: r.teacher_email,
+        createdAt: r.created_at,
+      }))
+    );
   })
 );
 
@@ -1902,8 +2187,11 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { comments } = req.body;
-    await query(`UPDATE assessments SET status = 'Approved', comments = $1 WHERE id = $2`, [comments, req.params.id]);
+    const { comments, moderationRubric } = req.body;
+    await query(
+      `UPDATE assessments SET status = 'Approved', comments = $1, moderation_rubric = COALESCE($3, moderation_rubric) WHERE id = $2`,
+      [comments, req.params.id, moderationRubric ? JSON.stringify(moderationRubric) : null]
+    );
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
     res.json(mapAssessment(rows[0]));
   })
@@ -1917,8 +2205,11 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { comments } = req.body;
-    await query(`UPDATE assessments SET status = 'Rejected', comments = $1 WHERE id = $2`, [comments, req.params.id]);
+    const { comments, moderationRubric } = req.body;
+    await query(
+      `UPDATE assessments SET status = 'Rejected', comments = $1, moderation_rubric = COALESCE($3, moderation_rubric) WHERE id = $2`,
+      [comments, req.params.id, moderationRubric ? JSON.stringify(moderationRubric) : null]
+    );
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
     res.json(mapAssessment(rows[0]));
   })
@@ -1949,8 +2240,8 @@ apiRouter.post(
       records: { studentId: string; status: string; remarks?: string }[];
       timetableSlotId?: string;
     };
-    // TE-002/CM-006: attendance is attributed to the recording teacher, and — when the
-    // caller names the scheduled session it was taken for — linked to that timetable
+    // TE-002/CM-006: attendance is attributed to the recording teacher, and ΓÇö when the
+    // caller names the scheduled session it was taken for ΓÇö linked to that timetable
     // slot, so it can be traced back to which class/subject/period it belongs to.
     const teacherId = await resolveActingTeacherId(req, res, req.body.teacherId);
     if (!teacherId) return;
@@ -2167,7 +2458,7 @@ apiRouter.post(
   })
 );
 
-// A teacher's own assigned training, regardless of program — the "Assigned to Me" view.
+// A teacher's own assigned training, regardless of program ΓÇö the "Assigned to Me" view.
 apiRouter.get(
   '/teacher-training-assignments/mine',
   requireAuth,
@@ -2183,7 +2474,7 @@ apiRouter.get(
 );
 
 // Manual status edits (e.g. an HoD reopening or cancelling an assignment). Completion
-// can NEVER be set here — only /progress can mark an assignment completed, and only
+// can NEVER be set here ΓÇö only /progress can mark an assignment completed, and only
 // once all three of its requirements are actually met (TR-007).
 apiRouter.patch(
   '/teacher-training-assignments/:id',
@@ -2213,7 +2504,7 @@ apiRouter.patch(
 );
 
 // TR-007: the only path that can mark a module completed. Completion requires ALL of:
-// every session done, the final assessment passed, and the reflection submitted —
+// every session done, the final assessment passed, and the reflection submitted ΓÇö
 // enforced here server-side, not left to the client to decide.
 apiRouter.patch(
   '/teacher-training-assignments/:id/progress',
@@ -2279,7 +2570,7 @@ apiRouter.patch(
     if (isComplete && !wasComplete) {
       await insertNotification(
         'Training module completed',
-        `${row.module_title} — sessions, assessment, and reflection all complete.`,
+        `${row.module_title} ΓÇö sessions, assessment, and reflection all complete.`,
         'success',
         '/dashboard/department-head/training',
         { schoolId: req.user!.schoolId }
@@ -2378,8 +2669,8 @@ apiRouter.post(
   })
 );
 
-// §40: records whether an assigned teacher actually attended/completed a
-// MOE/HR-scheduled training session, plus optional impact feedback — the
+// ┬º40: records whether an assigned teacher actually attended/completed a
+// MOE/HR-scheduled training session, plus optional impact feedback ΓÇö the
 // piece this training pipeline was missing for real School Head oversight.
 apiRouter.patch(
   '/training-plan-assignments/:id',
@@ -2520,7 +2811,7 @@ apiRouter.post(
     } else {
       const teacherId = await requireOwnTeacherId(req, res);
       if (!teacherId) return;
-      // TE-005: a note with no linked lesson plan is a Supplementary/Unplanned Session —
+      // TE-005: a note with no linked lesson plan is a Supplementary/Unplanned Session ΓÇö
       // an exception to the plan -> note evidence chain, so it must carry a reason.
       const standaloneReason = typeof b.standaloneReason === 'string' ? b.standaloneReason.trim() : '';
       if (!b.lessonPlanId && !standaloneReason) {
@@ -2854,7 +3145,7 @@ apiRouter.get(
 );
 
 // TE-010: HoD review workflow. A teacher can never approve/reject/remove their own
-// upload — only a privileged staff role may.
+// upload ΓÇö only a privileged staff role may.
 apiRouter.patch(
   '/teacher-resources/:id/approve',
   requireAuth,
@@ -2918,7 +3209,7 @@ apiRouter.patch(
   })
 );
 
-// MOE Documents — national policy/curriculum/compliance documents. Category and
+// MOE Documents ΓÇö national policy/curriculum/compliance documents. Category and
 // audience are categorization fields only; there is no distribution logic tied to
 // audience (see schema note on moe_documents).
 const MOE_DOCUMENT_CATEGORIES = [
@@ -3016,7 +3307,7 @@ apiRouter.delete(
   })
 );
 
-// Leadership Actions — backs the School Head dashboard's exception queue
+// Leadership Actions ΓÇö backs the School Head dashboard's exception queue
 // (category='exception') and improvement-initiative tracker
 // (category='improvement_initiative'). Scoped strictly to the caller's own
 // school (moe may pass schoolId to inspect a specific school).
@@ -3129,11 +3420,11 @@ apiRouter.patch(
   })
 );
 
-// School Resource Library — the "External Approved Resource" source in the
+// School Resource Library ΓÇö the "External Approved Resource" source in the
 // school head's 5-source resource classification view. The other 4 sources
 // (MOE Official, Department Resource, School Approved, PRIME Programme) are
 // read directly from moe_documents, training_materials, teacher_resources,
-// and the platform's built-in module libraries — none of them needed a new
+// and the platform's built-in module libraries ΓÇö none of them needed a new
 // table. This one is for resources that live outside the platform entirely.
 apiRouter.get(
   '/school-resources',
@@ -3291,7 +3582,7 @@ apiRouter.get(
       res.json(rows.map(mapComplianceRequirement));
       return;
     }
-    // One row per requirement, always — schools with no tracking row yet still need to
+    // One row per requirement, always ΓÇö schools with no tracking row yet still need to
     // see the requirement (as "Not Started"), not just the ones they've already touched.
     const { rows } = await query(
       `SELECT r.id AS req_id, r.title AS requirement_title, r.authority AS requirement_authority,
@@ -3538,10 +3829,10 @@ apiRouter.patch(
   })
 );
 
-// MOE Academic Calendar (§6): a real, shared source of truth replacing what
+// MOE Academic Calendar (┬º6): a real, shared source of truth replacing what
 // used to be written only to the publishing browser's localStorage. MOE sees
 // its own latest draft so it can resume editing; every other role only ever
-// sees the latest Published one — enforced here, not just hidden in the UI.
+// sees the latest Published one ΓÇö enforced here, not just hidden in the UI.
 apiRouter.get(
   '/moe-calendar',
   requireAuth,
@@ -3679,7 +3970,7 @@ apiRouter.patch(
 );
 
 // Notifications. `scope` lets a caller broadcast to their whole school (e.g. an
-// announcement) instead of just themselves — 'self' (the default) covers the
+// announcement) instead of just themselves ΓÇö 'self' (the default) covers the
 // overwhelming majority of calls, which are self-confirmation toasts ("Wellness
 // Survey Created", etc.) that were never meant to reach anyone else.
 apiRouter.post(
@@ -3766,7 +4057,7 @@ apiRouter.post(
     }
     const noteStatus = String(note.status || '');
     if (noteStatus !== 'Approved') {
-      // Soft path: classroom delivery implies the note was taught — promote to Approved
+      // Soft path: classroom delivery implies the note was taught ΓÇö promote to Approved
       // so HoD exam topics and delivery lists stay consistent.
       // Teaching notes no longer need HOD approval to be marked as delivered
       // Auto-approve if not already approved
@@ -3774,7 +4065,7 @@ apiRouter.post(
         await query(
           `UPDATE teaching_notes
            SET status = 'Approved',
-               dept_comments = COALESCE(NULLIF(TRIM(dept_comments), ''), 'Auto-approved — classroom delivery recorded.'),
+               dept_comments = COALESCE(NULLIF(TRIM(dept_comments), ''), 'Auto-approved ΓÇö classroom delivery recorded.'),
                updated_at = CURRENT_DATE
            WHERE id = $1`,
           [note.id],
@@ -3880,7 +4171,7 @@ apiRouter.post(
       const msgContent = [
         `**Classroom challenge** after delivering "${note.title}"`,
         note.subject || note.grade
-          ? `_${[note.grade, note.subject].filter(Boolean).join(' · ')}_`
+          ? `_${[note.grade, note.subject].filter(Boolean).join(' ┬╖ ')}_`
           : '',
         '',
         challengeBody,
@@ -3971,7 +4262,7 @@ apiRouter.post(
   })
 );
 
-// Teacher ↔ HoD staff messages (polled for near-real-time)
+// Teacher Γåö HoD staff messages (polled for near-real-time)
 apiRouter.get(
   '/staff-messages',
   requireAuth,

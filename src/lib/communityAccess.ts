@@ -166,20 +166,43 @@ export async function loadReactionsForMessages(
 }
 
 export async function autoJoinDepartmentCommunities(user: AuthUser) {
-  if (!user.departmentId) return;
-  const { rows } = await query(
-    `SELECT id FROM communities
-     WHERE type = 'department' AND department_id = $1
-       AND ($2::text IS NULL OR school_id = $2 OR school_id IS NULL)`,
-    [user.departmentId, user.schoolId]
-  );
-  for (const row of rows) {
-    await query(
-      `INSERT INTO community_members (id, community_id, user_id, role)
-       VALUES ($1,$2,$3,'member')
-       ON CONFLICT (community_id, user_id) DO NOTHING`,
-      [newId('cmem'), row.id, user.id]
+  // Bug fix: this guard used to wrap the ENTIRE function, so school-head and
+  // head-of-academics — who never have a departmentId, since they oversee the whole
+  // school rather than one subject — silently never reached the "general" or "hod"
+  // auto-join blocks below at login. It now only skips this one own-department join.
+  if (user.departmentId) {
+    const { rows } = await query(
+      `SELECT id FROM communities
+       WHERE type = 'department' AND department_id = $1
+         AND ($2::text IS NULL OR school_id = $2 OR school_id IS NULL)`,
+      [user.departmentId, user.schoolId]
     );
+    for (const row of rows) {
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,'member')
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), row.id, user.id]
+      );
+    }
+  }
+
+  // CO-001: the Curriculum Head (head-of-academics) isn't scoped to one department but
+  // oversees curriculum across all of them — so they join every subject department
+  // community at their school, not just a school-wide general one.
+  if (user.schoolId && user.role === 'head-of-academics') {
+    const { rows: allDeptCommunities } = await query(
+      `SELECT id FROM communities WHERE type = 'department' AND school_id = $1`,
+      [user.schoolId]
+    );
+    for (const row of allDeptCommunities) {
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,'member')
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), row.id, user.id]
+      );
+    }
   }
 
   // Always ensure general communities for school staff
@@ -194,6 +217,48 @@ export async function autoJoinDepartmentCommunities(user: AuthUser) {
          VALUES ($1,$2,$3,'member')
          ON CONFLICT (community_id, user_id) DO NOTHING`,
         [newId('cmem'), row.id, user.id]
+      );
+    }
+  }
+
+  // CO-002: department heads, the school head, and the curriculum head (head-of-academics)
+  // are automatically members of their school's system-generated "Department Heads"
+  // community — a cross-department space separate from each subject's own community.
+  if (user.schoolId && ['department-head', 'school-head', 'head-of-academics'].includes(user.role)) {
+    const { rows: hodCommunities } = await query(
+      `SELECT id FROM communities WHERE type = 'hod' AND school_id = $1`,
+      [user.schoolId]
+    );
+    for (const row of hodCommunities) {
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), row.id, user.id, user.role === 'school-head' ? 'admin' : 'member']
+      );
+    }
+  }
+
+  // TE-011: a teacher who is a designated Mid/Final Exam reviewer for a department (or
+  // that department's own head) is a member of that department's "Reviewers community" —
+  // re-synced at every login as a safety net alongside the grant-time join in
+  // POST /assessment-reviewers.
+  if (user.schoolId) {
+    const { rows: reviewerCommunities } = await query(
+      user.role === 'department-head'
+        ? `SELECT c.id FROM communities c WHERE c.type = 'reviewers' AND c.department_id = $1`
+        : `SELECT c.id FROM communities c
+           JOIN assessment_reviewers ar ON ar.department_id = c.department_id
+           JOIN teachers t ON t.id = ar.teacher_id
+           WHERE c.type = 'reviewers' AND LOWER(t.email) = LOWER($1)`,
+      [user.role === 'department-head' ? user.departmentId : user.email]
+    );
+    for (const row of reviewerCommunities) {
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), row.id, user.id, user.role === 'department-head' ? 'admin' : 'member']
       );
     }
   }

@@ -297,6 +297,7 @@ export function mapLessonPlan(row: Record<string, unknown>) {
     status: row.status,
     deptComments: row.dept_comments ?? undefined,
     schoolHeadComments: row.school_head_comments ?? undefined,
+    returnReasonCategory: (row.return_reason_category as string | null) ?? undefined,
     version: Number(row.version),
     objectives: row.objectives ?? [],
     activities: row.activities ?? [],
@@ -345,6 +346,8 @@ export function mapAssessment(row: Record<string, unknown>) {
     difficulty: row.difficulty,
     questions: row.questions ?? [],
     coveredTeachingNoteIds: row.covered_teaching_note_ids ?? [],
+    moderationRubric: row.moderation_rubric ?? undefined,
+    reviewDepartmentId: (row.review_department_id as string | null) ?? undefined,
     createdByRole: (row.created_by_role as string) || 'teacher',
     createdAt:
       row.created_at instanceof Date
@@ -606,6 +609,15 @@ export function mapTeacherFeedback(row: Record<string, unknown>) {
     comment: row.comment,
     rating: row.rating != null ? Number(row.rating) : undefined,
     date: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
+    strength: row.strength ?? undefined,
+    developmentArea: row.development_area ?? undefined,
+    agreedAction: row.agreed_action ?? undefined,
+    followUpRequired: row.follow_up_required != null ? Boolean(row.follow_up_required) : undefined,
+    followUpDueDate: row.follow_up_due_date
+      ? (row.follow_up_due_date instanceof Date
+          ? row.follow_up_due_date.toISOString().split('T')[0]
+          : String(row.follow_up_due_date))
+      : undefined,
   };
 }
 
