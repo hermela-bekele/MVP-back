@@ -113,3 +113,62 @@ CREATE INDEX IF NOT EXISTS idx_community_reactions_message ON community_reaction
 CREATE INDEX IF NOT EXISTS idx_community_mentions_user_unread
   ON community_mention_notifications(user_id, is_read)
   WHERE is_read = FALSE;
+
+-- CO-002: a cross-department "Department Heads" community — system-generated, never
+-- manually created — bringing together every department head, the school head, and the
+-- curriculum head (head-of-academics) at a school, separate from each subject's own
+-- department community. Re-adding the constraint by its standard auto-generated name is
+-- idempotent (safe to re-run on every deploy).
+ALTER TABLE communities DROP CONSTRAINT IF EXISTS communities_type_check;
+ALTER TABLE communities ADD CONSTRAINT communities_type_check
+  CHECK (type IN ('department', 'general', 'custom', 'hod'));
+
+-- One system-generated HOD community per school that doesn't already have one.
+INSERT INTO communities (id, school_id, name, description, type, created_by)
+SELECT 'hod-' || s.id, s.id, 'Department Heads', 'Department heads, the school head, and the curriculum head', 'hod', NULL
+FROM schools s
+WHERE NOT EXISTS (
+  SELECT 1 FROM communities c WHERE c.school_id = s.id AND c.type = 'hod'
+);
+
+-- Default channels for any HOD community that doesn't have one yet.
+INSERT INTO community_channels (id, community_id, name, description, type, position)
+SELECT c.id || '-ch-gen', c.id, 'general', 'General discussion', 'text', 0
+FROM communities c
+WHERE c.type = 'hod'
+  AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.community_id = c.id);
+
+-- Backfill: every existing department-head, school-head, and head-of-academics account
+-- joins their school's HOD community. New accounts going forward are auto-joined at login
+-- (see autoJoinDepartmentCommunities in src/lib/communityAccess.ts) — this only covers
+-- accounts that already existed before this community type was introduced.
+INSERT INTO community_members (id, community_id, user_id, role)
+SELECT 'hod-mem-' || pu.id, c.id, pu.id,
+  CASE WHEN pu.role = 'school-head' THEN 'admin' ELSE 'member' END
+FROM portal_users pu
+JOIN communities c ON c.school_id = pu.school_id AND c.type = 'hod'
+WHERE pu.role IN ('department-head', 'school-head', 'head-of-academics')
+ON CONFLICT (community_id, user_id) DO NOTHING;
+
+-- Bug fix backfill: autoJoinDepartmentCommunities used to bail out entirely for any user
+-- without a departmentId, so school-head and head-of-academics accounts (who never have
+-- one) silently never got auto-joined to their school's general or department
+-- communities at login. This repairs any account already affected; the live function is
+-- now fixed so it won't recur for future logins.
+INSERT INTO community_members (id, community_id, user_id, role)
+SELECT 'gen-mem-' || pu.id, c.id, pu.id,
+  CASE WHEN pu.role = 'school-head' THEN 'admin' ELSE 'member' END
+FROM portal_users pu
+JOIN communities c ON c.school_id = pu.school_id AND c.type = 'general'
+WHERE pu.role IN ('school-head', 'head-of-academics')
+ON CONFLICT (community_id, user_id) DO NOTHING;
+
+-- CO-001: the Curriculum Head (head-of-academics) isn't scoped to one department but
+-- oversees curriculum across all of them — backfill every existing head-of-academics
+-- account into every subject department community at their school.
+INSERT INTO community_members (id, community_id, user_id, role)
+SELECT 'dept-mem-' || c.id || '-' || pu.id, c.id, pu.id, 'member'
+FROM portal_users pu
+JOIN communities c ON c.school_id = pu.school_id AND c.type = 'department'
+WHERE pu.role = 'head-of-academics'
+ON CONFLICT (community_id, user_id) DO NOTHING;

@@ -141,6 +141,11 @@ ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS plan_type TEXT;
 ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS plan_detail TEXT;
 ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS created_by_role TEXT;
 
+-- A HoD returning a weekly plan must name which kind of problem it is — never just a
+-- free-text comment — so the teacher knows exactly what to revise.
+ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS return_reason_category TEXT
+  CHECK (return_reason_category IN ('curriculum_alignment', 'pacing', 'pedagogy', 'assessment', 'differentiation', 'resource_issue'));
+
 -- HoD is the final approver for weekly plans; normalize legacy school-head queue status.
 UPDATE lesson_plans SET status = 'Approved'
  WHERE status = 'Pending School Head';
@@ -185,6 +190,11 @@ CREATE TABLE IF NOT EXISTS assessments (
 -- name) it covers — lets the teacher and reviewers trace exactly which taught lessons
 -- the test is drawn from instead of an arbitrary/unverified lesson list.
 ALTER TABLE assessments ADD COLUMN IF NOT EXISTS covered_teaching_note_ids JSONB NOT NULL DEFAULT '[]';
+
+-- Assessment Moderation Rubric: a department head's review names a verdict for each of 8
+-- fixed quality criteria (curriculum alignment, cognitive level, clarity, difficulty,
+-- coverage, fairness, answer key, appropriateness) instead of one free-text comment.
+ALTER TABLE assessments ADD COLUMN IF NOT EXISTS moderation_rubric JSONB;
 
 ALTER TABLE assessments ADD COLUMN IF NOT EXISTS created_by_role TEXT NOT NULL DEFAULT 'teacher';
 
@@ -441,6 +451,15 @@ ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS author_role TEXT;
 -- parent-given feedback (a note, not a formal evaluation) doesn't map to any of these.
 ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS category TEXT
   CHECK (category IN ('informal_peer', 'coaching', 'classroom_observation', 'formal_performance', 'anonymous_survey'));
+
+-- FB-004: structured coaching/observation record — only a department head's direct
+-- feedback (coaching, classroom observation, formal performance) fills these in; peer,
+-- parent, student, and anonymous-survey feedback leave them null.
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS strength TEXT;
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS development_area TEXT;
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS agreed_action TEXT;
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS follow_up_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE teacher_feedbacks ADD COLUMN IF NOT EXISTS follow_up_due_date DATE;
 
 CREATE TABLE IF NOT EXISTS parent_messages (
   id TEXT PRIMARY KEY,

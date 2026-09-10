@@ -296,7 +296,13 @@ apiRouter.post('/uploads', (req, res, next) => {
       res.status(400).json({ error: 'No file uploaded' });
       return;
     }
-    const url = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    // A relative path, not an absolute host:port URL — the host that happened to handle
+    // this specific upload request isn't necessarily reachable later (a local dev backend
+    // can move ports across restarts, sit behind a relay, or the app can simply be
+    // redeployed) which used to bake a URL that would later fail with "connection
+    // refused". The frontend resolves this against whichever backend is currently
+    // configured (see resolveResourceUrl in lib/api.ts).
+    const url = `/uploads/${req.file.filename}`;
     res.status(201).json({
       url,
       filename: req.file.filename,
@@ -841,11 +847,17 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { role, comments } = req.body as { role: 'dept' | 'school'; comments: string };
+    const { role, comments, returnReasonCategory } = req.body as {
+      role: 'dept' | 'school';
+      comments: string;
+      returnReasonCategory?: string;
+    };
     await query(
       `UPDATE lesson_plans SET status = 'Rejected', dept_comments = CASE WHEN $1 = 'dept' THEN $2 ELSE dept_comments END,
-       school_head_comments = CASE WHEN $1 = 'school' THEN $2 ELSE school_head_comments END, version = version + 1 WHERE id = $3`,
-      [role, comments, req.params.id]
+       school_head_comments = CASE WHEN $1 = 'school' THEN $2 ELSE school_head_comments END,
+       return_reason_category = CASE WHEN $1 = 'dept' THEN $4 ELSE return_reason_category END,
+       version = version + 1 WHERE id = $3`,
+      [role, comments, req.params.id, role === 'dept' ? returnReasonCategory ?? null : null]
     );
     const { rows } = await query('SELECT * FROM lesson_plans WHERE id = $1', [req.params.id]);
     res.json(mapLessonPlan(rows[0]));
@@ -1164,8 +1176,11 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { comments } = req.body;
-    await query(`UPDATE assessments SET status = 'Approved', comments = $1 WHERE id = $2`, [comments, req.params.id]);
+    const { comments, moderationRubric } = req.body;
+    await query(
+      `UPDATE assessments SET status = 'Approved', comments = $1, moderation_rubric = COALESCE($3, moderation_rubric) WHERE id = $2`,
+      [comments, req.params.id, moderationRubric ? JSON.stringify(moderationRubric) : null]
+    );
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
     res.json(mapAssessment(rows[0]));
   })
@@ -1179,8 +1194,11 @@ apiRouter.patch(
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const { comments } = req.body;
-    await query(`UPDATE assessments SET status = 'Rejected', comments = $1 WHERE id = $2`, [comments, req.params.id]);
+    const { comments, moderationRubric } = req.body;
+    await query(
+      `UPDATE assessments SET status = 'Rejected', comments = $1, moderation_rubric = COALESCE($3, moderation_rubric) WHERE id = $2`,
+      [comments, req.params.id, moderationRubric ? JSON.stringify(moderationRubric) : null]
+    );
     const { rows } = await query('SELECT * FROM assessments WHERE id = $1', [req.params.id]);
     res.json(mapAssessment(rows[0]));
   })
