@@ -196,6 +196,27 @@ ALTER TABLE assessments ADD COLUMN IF NOT EXISTS covered_teaching_note_ids JSONB
 -- coverage, fairness, answer key, appropriateness) instead of one free-text comment.
 ALTER TABLE assessments ADD COLUMN IF NOT EXISTS moderation_rubric JSONB;
 
+-- Which department a Mid/Final Exam was generated for — needed to gate visibility to
+-- that department's designated reviewers before general dissemination. Nullable: only
+-- ever set for HoD/reviewer-generated exams, never for a teacher's own Quiz/Assignment.
+ALTER TABLE assessments ADD COLUMN IF NOT EXISTS review_department_id TEXT REFERENCES departments(id) ON DELETE SET NULL;
+
+-- Teachers a department head has designated to review Mid/Final Exams before they're
+-- disseminated to the rest of the department's teachers. A reviewer also gains the
+-- ability to generate Mid/Final Exams for that department themselves (acting as the
+-- HoD would), so this table is both a review-access grant and a generation-permission
+-- grant for the same (department, teacher) pair.
+CREATE TABLE IF NOT EXISTS assessment_reviewers (
+  id TEXT PRIMARY KEY,
+  department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+  teacher_id TEXT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+  granted_by TEXT REFERENCES portal_users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (department_id, teacher_id)
+);
+CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_teacher ON assessment_reviewers(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_department ON assessment_reviewers(department_id);
+
 ALTER TABLE assessments ADD COLUMN IF NOT EXISTS created_by_role TEXT NOT NULL DEFAULT 'teacher';
 
 -- Quizzes/baselines never needed approval; backfill any leftover pending/draft/rejected ones.

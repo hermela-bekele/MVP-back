@@ -103,7 +103,7 @@ export interface Assessment {
   grade: string;
   teacherId: string;
   teacherName: string;
-  status: 'Draft' | 'Pending Dept Head' | 'Approved' | 'Rejected';
+  status: 'Draft' | 'Pending Dept Head' | 'Pending Reviewer' | 'Approved' | 'Rejected';
   comments?: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   questions: { id: number; question: string; type: string; options?: string[]; answer: string }[];
@@ -111,6 +111,7 @@ export interface Assessment {
     'curriculumAlignment' | 'cognitiveLevel' | 'clarity' | 'difficulty' | 'coverage' | 'fairness' | 'answerKey' | 'appropriateness',
     'meets' | 'needs_improvement' | 'not_applicable'
   >>;
+  reviewDepartmentId?: string;
   createdAt: string;
 }
 

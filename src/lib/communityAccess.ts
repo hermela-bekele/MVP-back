@@ -238,4 +238,28 @@ export async function autoJoinDepartmentCommunities(user: AuthUser) {
       );
     }
   }
+
+  // TE-011: a teacher who is a designated Mid/Final Exam reviewer for a department (or
+  // that department's own head) is a member of that department's "Reviewers community" —
+  // re-synced at every login as a safety net alongside the grant-time join in
+  // POST /assessment-reviewers.
+  if (user.schoolId) {
+    const { rows: reviewerCommunities } = await query(
+      user.role === 'department-head'
+        ? `SELECT c.id FROM communities c WHERE c.type = 'reviewers' AND c.department_id = $1`
+        : `SELECT c.id FROM communities c
+           JOIN assessment_reviewers ar ON ar.department_id = c.department_id
+           JOIN teachers t ON t.id = ar.teacher_id
+           WHERE c.type = 'reviewers' AND LOWER(t.email) = LOWER($1)`,
+      [user.role === 'department-head' ? user.departmentId : user.email]
+    );
+    for (const row of reviewerCommunities) {
+      await query(
+        `INSERT INTO community_members (id, community_id, user_id, role)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (community_id, user_id) DO NOTHING`,
+        [newId('cmem'), row.id, user.id, user.role === 'department-head' ? 'admin' : 'member']
+      );
+    }
+  }
 }

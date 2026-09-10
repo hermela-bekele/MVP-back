@@ -203,6 +203,7 @@ export function mapAssessment(row: Record<string, unknown>) {
     questions: row.questions ?? [],
     coveredTeachingNoteIds: row.covered_teaching_note_ids ?? [],
     moderationRubric: row.moderation_rubric ?? undefined,
+    reviewDepartmentId: (row.review_department_id as string | null) ?? undefined,
     createdByRole: (row.created_by_role as string) || 'teacher',
     createdAt:
       row.created_at instanceof Date

@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_community_mentions_user_unread
 -- idempotent (safe to re-run on every deploy).
 ALTER TABLE communities DROP CONSTRAINT IF EXISTS communities_type_check;
 ALTER TABLE communities ADD CONSTRAINT communities_type_check
-  CHECK (type IN ('department', 'general', 'custom', 'hod'));
+  CHECK (type IN ('department', 'general', 'custom', 'hod', 'reviewers'));
 
 -- One system-generated HOD community per school that doesn't already have one.
 INSERT INTO communities (id, school_id, name, description, type, created_by)
