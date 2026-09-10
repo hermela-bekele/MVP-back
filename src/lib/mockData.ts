@@ -1403,7 +1403,7 @@ export const mockTeacherCheckInPrompts: TeacherCheckInPrompt[] = [
   {
     id: 'tcp-2',
     title: 'Instructional Delivery Reflection',
-    type: 'Teacher Reflection',
+    type: 'Student Satisfaction',
     dueDate: '2026-05-30',
     teacherResponse: 'Students were highly engaged during the genetics practicum; pacing on session 3 could improve.',
     respondedAt: '2026-05-22',
