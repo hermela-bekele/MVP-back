@@ -201,3 +201,32 @@ ON CONFLICT DO NOTHING;
 INSERT INTO role_permissions (role, permission_code, school_id)
 SELECT 'school-head', 'grades.finalize', id FROM schools
 ON CONFLICT DO NOTHING;
+
+-- Teacher requests to unlock submitted/finalized subject-term results for editing.
+-- Academic Head approve/reject; emergency reopen creates a row with source = academic_head_direct.
+CREATE TABLE IF NOT EXISTS result_change_requests (
+  id TEXT PRIMARY KEY,
+  school_id TEXT REFERENCES schools(id),
+  teacher_id TEXT NOT NULL REFERENCES teachers(id),
+  subject TEXT NOT NULL,
+  grade_level TEXT NOT NULL,
+  section TEXT NOT NULL,
+  academic_year TEXT NOT NULL,
+  term TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'consumed', 'expired')),
+  previous_status TEXT CHECK (previous_status IN ('submitted', 'finalized')),
+  source TEXT NOT NULL DEFAULT 'teacher'
+    CHECK (source IN ('teacher', 'academic_head_direct')),
+  reviewed_by TEXT,
+  reviewed_at TIMESTAMPTZ,
+  review_note TEXT,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_result_change_requests_scope
+  ON result_change_requests(school_id, subject, grade_level, section, academic_year, term, status);
+CREATE INDEX IF NOT EXISTS idx_result_change_requests_teacher
+  ON result_change_requests(teacher_id, status);

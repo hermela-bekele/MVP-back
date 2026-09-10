@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS teachers (
   phone TEXT NOT NULL,
   department_id TEXT REFERENCES departments(id),
   school_id TEXT REFERENCES schools(id),
-  status TEXT NOT NULL CHECK (status IN ('Active', 'On Leave')),
+  status TEXT NOT NULL CHECK (status IN ('Active', 'On Leave', 'Left')),
   subjects JSONB NOT NULL DEFAULT '[]',
   grades JSONB NOT NULL DEFAULT '[]',
   certification TEXT NOT NULL DEFAULT '',
@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS teachers (
 
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS years_experience INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS experience_override TEXT CHECK (experience_override IN ('new', 'experienced'));
+
+-- Allow departed teachers (MOE replacement workflow). Idempotent for existing DBs.
+ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_status_check;
+ALTER TABLE teachers ADD CONSTRAINT teachers_status_check CHECK (status IN ('Active', 'On Leave', 'Left'));
 
 -- STEP self-assessment: a teacher's self-rating against the competency rubric.
 CREATE TABLE IF NOT EXISTS teacher_self_assessments (
@@ -244,6 +248,14 @@ CREATE TABLE IF NOT EXISTS school_check_ins (
   date DATE NOT NULL
 );
 
+-- Confidentiality must be configured before a survey launches (§39): 'identified'
+-- shows the respondent name plainly, 'restricted' still records it but keeps it
+-- out of the default list view, and 'anonymous' never stores it at all — the
+-- column is nullable specifically so an anonymous response has no name to leak.
+ALTER TABLE school_check_ins ALTER COLUMN respondent_name DROP NOT NULL;
+ALTER TABLE school_check_ins ADD COLUMN IF NOT EXISTS confidentiality TEXT NOT NULL DEFAULT 'identified'
+  CHECK (confidentiality IN ('identified', 'restricted', 'anonymous'));
+
 CREATE TABLE IF NOT EXISTS exams (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -307,6 +319,17 @@ CREATE TABLE IF NOT EXISTS training_plan_assignments (
   )
 );
 CREATE INDEX IF NOT EXISTS idx_training_plan_assignments_plan ON training_plan_assignments(training_plan_id);
+
+-- §40 cross-portal audit finding: an assignment recorded only who was assigned
+-- to a MOE/HR-scheduled training, never whether they actually completed it or
+-- what impact it had — so School Head oversight had nothing real to show for
+-- this training pipeline (unlike the separate TIP/STEP/ELEP module system,
+-- which already tracked completion). attended is tri-state: NULL = not yet
+-- recorded, so a school with no data reports "no data" rather than a fake 0%.
+ALTER TABLE training_plan_assignments ADD COLUMN IF NOT EXISTS attended BOOLEAN;
+ALTER TABLE training_plan_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE training_plan_assignments ADD COLUMN IF NOT EXISTS impact_rating INTEGER CHECK (impact_rating BETWEEN 1 AND 5);
+ALTER TABLE training_plan_assignments ADD COLUMN IF NOT EXISTS impact_notes TEXT;
 
 CREATE TABLE IF NOT EXISTS teaching_notes (
   id TEXT PRIMARY KEY,
@@ -473,6 +496,18 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link_path TEXT;
+
+-- Cross-portal audit finding: notifications had no owner at all — every user of
+-- every role at every school saw every notification. user_id targets a single
+-- recipient (used for self-confirmation toasts, the overwhelming majority of
+-- call sites); school_id targets everyone at one school where no single exact
+-- recipient is resolvable in the handler. A row with both NULL is a legacy
+-- (pre-fix) or intentionally-global notification and stays visible to everyone,
+-- exactly as before, so no existing data or behavior is lost.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES portal_users(id);
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS school_id TEXT REFERENCES schools(id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_school ON notifications(school_id);
 
 CREATE TABLE IF NOT EXISTS portal_users (
   id TEXT PRIMARY KEY,

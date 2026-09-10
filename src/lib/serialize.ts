@@ -2,6 +2,148 @@
 
 import { isAnonymousFeedback } from './feedback.js';
 
+export function mapLeadershipAction(row: Record<string, unknown>) {
+  const due = row.due_date;
+  return {
+    id: row.id,
+    schoolId: row.school_id,
+    category: row.category,
+    issue: row.issue,
+    evidence: row.evidence ?? undefined,
+    source: row.source ?? undefined,
+    severity: row.severity,
+    owner: row.owner ?? undefined,
+    decisionRequired: row.decision_required ?? undefined,
+    recommendedAction: row.recommended_action ?? undefined,
+    dueDate: due instanceof Date ? due.toISOString().split('T')[0] : (due ?? undefined),
+    status: row.status,
+    progressPercent: row.progress_percent !== null && row.progress_percent !== undefined ? Number(row.progress_percent) : undefined,
+    createdBy: row.created_by ?? undefined,
+    createdByName: row.created_by_name ?? undefined,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    resolvedAt: row.resolved_at ? (row.resolved_at instanceof Date ? row.resolved_at.toISOString() : String(row.resolved_at)) : undefined,
+  };
+}
+
+export function mapMoeDocument(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    audience: row.audience,
+    fileUrl: row.file_url,
+    fileName: row.file_name,
+    fileSize: row.file_size !== null && row.file_size !== undefined ? Number(row.file_size) : null,
+    uploadedBy: row.uploaded_by ?? null,
+    uploadedByName: row.uploaded_by_name ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function mapSchoolResource(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    schoolId: row.school_id,
+    title: row.title,
+    description: row.description ?? undefined,
+    url: row.url,
+    grade: row.grade ?? undefined,
+    subject: row.subject ?? undefined,
+    addedBy: row.added_by ?? undefined,
+    addedByName: row.added_by_name ?? undefined,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+}
+
+export function mapComplianceRequirement(row: Record<string, unknown>) {
+  const due = row.due_date;
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? undefined,
+    authority: row.authority,
+    dueDate: due instanceof Date ? due.toISOString().split('T')[0] : (due ?? undefined),
+    evidenceRequired: row.evidence_required ?? undefined,
+    audience: row.audience,
+    createdBy: row.created_by ?? undefined,
+    createdByName: row.created_by_name ?? undefined,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+}
+
+export function mapSchoolComplianceStatus(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    requirementId: row.requirement_id,
+    schoolId: row.school_id,
+    status: row.status,
+    responsiblePerson: row.responsible_person ?? undefined,
+    evidenceSubmittedUrl: row.evidence_submitted_url ?? undefined,
+    evidenceSubmittedAt: row.evidence_submitted_at
+      ? (row.evidence_submitted_at instanceof Date ? row.evidence_submitted_at.toISOString() : String(row.evidence_submitted_at))
+      : undefined,
+    outstandingIssue: row.outstanding_issue ?? undefined,
+    verifiedBy: row.verified_by ?? undefined,
+    verifiedByName: row.verified_by_name ?? undefined,
+    verifiedAt: row.verified_at
+      ? (row.verified_at instanceof Date ? row.verified_at.toISOString() : String(row.verified_at))
+      : undefined,
+    verificationNote: row.verification_note ?? undefined,
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+    // Present only when the caller joined compliance_requirements (see the list route).
+    requirementTitle: row.requirement_title ?? undefined,
+    requirementAuthority: row.requirement_authority ?? undefined,
+    requirementDueDate: row.requirement_due_date instanceof Date
+      ? (row.requirement_due_date as Date).toISOString().split('T')[0]
+      : (row.requirement_due_date ?? undefined),
+    requirementEvidenceRequired: row.requirement_evidence_required ?? undefined,
+  };
+}
+
+export function mapMoeMessageThread(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    referenceNumber: row.reference_number,
+    schoolId: row.school_id,
+    subject: row.subject,
+    status: row.status,
+    createdBy: row.created_by ?? undefined,
+    createdByName: row.created_by_name ?? undefined,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    lastMessageAt: row.last_message_at instanceof Date ? row.last_message_at.toISOString() : String(row.last_message_at),
+    schoolLastReadAt: row.school_last_read_at instanceof Date ? row.school_last_read_at.toISOString() : String(row.school_last_read_at),
+    moeLastReadAt: row.moe_last_read_at
+      ? (row.moe_last_read_at instanceof Date ? row.moe_last_read_at.toISOString() : String(row.moe_last_read_at))
+      : undefined,
+  };
+}
+
+export function mapMoeThreadMessage(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    senderUserId: row.sender_user_id ?? undefined,
+    senderRole: row.sender_role,
+    senderName: row.sender_name,
+    body: row.body,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+}
+
+export function mapMoeCalendarDraft(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    academicYear: row.academic_year,
+    title: row.title,
+    events: row.events ?? [],
+    status: row.status,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString().split('T')[0] : String(row.created_at),
+    publishedAt: row.published_at
+      ? (row.published_at instanceof Date ? row.published_at.toISOString().split('T')[0] : String(row.published_at))
+      : undefined,
+  };
+}
+
 export function mapSchool(row: Record<string, unknown>) {
   return {
     id: row.id,
@@ -17,6 +159,8 @@ export function mapSchool(row: Record<string, unknown>) {
     teachersCount: Number(row.teachers_count),
     status: row.status,
     gps: row.gps,
+    registrySource: row.registry_source ?? 'manual',
+    emisId: row.emis_id ?? null,
   };
 }
 
@@ -245,10 +389,11 @@ export function mapSchoolCheckIn(row: Record<string, unknown>) {
     id: row.id,
     title: row.title ?? undefined,
     type: row.type,
-    respondentName: row.respondent_name,
+    respondentName: row.respondent_name ?? undefined,
     rating: Number(row.rating),
     comment: row.comment,
     date: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
+    confidentiality: row.confidentiality ?? 'identified',
   };
 }
 
@@ -275,8 +420,10 @@ export function mapTrainingMaterial(row: Record<string, unknown>) {
   return {
     id: row.id,
     title: row.title,
+    description: row.description ?? undefined,
     resourceUrl: row.resource_url,
     category: row.category,
+    audience: row.audience ?? 'All',
     trainingType: row.training_type ?? undefined,
     departmentId: row.department_id ?? undefined,
     grade: row.grade ?? undefined,
@@ -295,6 +442,8 @@ export function mapTrainingPlan(row: Record<string, unknown>) {
     title: row.title,
     description: row.description ?? undefined,
     type: row.type,
+    category: row.category ?? undefined,
+    audience: row.audience ?? 'All',
     startDate: start instanceof Date ? start.toISOString().split('T')[0] : String(start),
     endDate: end instanceof Date ? end.toISOString().split('T')[0] : end ?? undefined,
     location: row.location ?? undefined,
@@ -307,6 +456,7 @@ export function mapTrainingPlan(row: Record<string, unknown>) {
 
 export function mapTrainingPlanAssignment(row: Record<string, unknown>) {
   const d = row.created_at;
+  const completedAt = row.completed_at;
   return {
     id: row.id,
     trainingPlanId: row.training_plan_id,
@@ -315,6 +465,12 @@ export function mapTrainingPlanAssignment(row: Record<string, unknown>) {
     departmentId: row.department_id ?? undefined,
     assignedByName: row.assigned_by_name,
     createdAt: d instanceof Date ? d.toISOString() : String(d),
+    attended: row.attended === null || row.attended === undefined ? undefined : Boolean(row.attended),
+    completedAt: completedAt
+      ? (completedAt instanceof Date ? completedAt.toISOString() : String(completedAt))
+      : undefined,
+    impactRating: row.impact_rating !== null && row.impact_rating !== undefined ? Number(row.impact_rating) : undefined,
+    impactNotes: row.impact_notes ?? undefined,
   };
 }
 

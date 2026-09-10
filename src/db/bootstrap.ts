@@ -38,6 +38,7 @@ import {
   mapPerformanceReview,
   mapOnboardingTask,
   mapStaffAttendanceRecord,
+  mapMoeCalendarDraft,
 } from '../lib/serialize.js';
 
 export async function loadBootstrap(caller: AuthUser) {
@@ -78,6 +79,8 @@ export async function loadBootstrap(caller: AuthUser) {
     performanceReviews,
     onboardingTasks,
     staffAttendance,
+    regions,
+    moeCalendarRows,
   ] = await Promise.all([
     query('SELECT * FROM schools ORDER BY name'),
     query('SELECT * FROM departments ORDER BY name'),
@@ -102,7 +105,18 @@ export async function loadBootstrap(caller: AuthUser) {
     query('SELECT * FROM teacher_feedbacks ORDER BY date DESC'),
     query('SELECT * FROM parent_messages ORDER BY sent_at DESC'),
     query('SELECT * FROM teacher_check_in_prompts ORDER BY due_date'),
-    query('SELECT * FROM notifications ORDER BY created_at DESC'),
+    // Cross-portal audit finding: this used to return every notification ever
+    // created to every logged-in user regardless of role or school. A row is
+    // now visible only if it targets this user directly, this user's school,
+    // or is a legacy/intentionally-global row (both user_id and school_id null).
+    query(
+      `SELECT * FROM notifications
+       WHERE user_id = $1
+          OR (user_id IS NULL AND school_id IS NULL)
+          OR (user_id IS NULL AND school_id = $2)
+       ORDER BY created_at DESC`,
+      [caller.id, caller.schoolId ?? null]
+    ),
     query('SELECT * FROM academic_calendars ORDER BY created_at DESC'),
     query('SELECT * FROM lesson_deliveries ORDER BY delivered_at DESC').catch(() => ({ rows: [] })),
     query('SELECT * FROM community_posts ORDER BY created_at DESC').catch(() => ({ rows: [] })),
@@ -125,10 +139,20 @@ export async function loadBootstrap(caller: AuthUser) {
     query('SELECT * FROM performance_reviews ORDER BY created_at DESC').catch(() => ({ rows: [] })),
     query('SELECT * FROM onboarding_tasks ORDER BY due_date').catch(() => ({ rows: [] })),
     query('SELECT * FROM staff_attendance ORDER BY date DESC').catch(() => ({ rows: [] })),
+    query('SELECT id, name FROM regions ORDER BY name').catch(() => ({ rows: [] })),
+    // §6: MOE sees its own latest draft (to resume editing); every other role
+    // only ever sees the latest Published one — the same rule as GET /moe-calendar.
+    query(
+      caller.role === 'moe'
+        ? 'SELECT * FROM moe_calendar_drafts ORDER BY created_at DESC LIMIT 1'
+        : "SELECT * FROM moe_calendar_drafts WHERE status = 'Published' ORDER BY created_at DESC LIMIT 1"
+    ).catch(() => ({ rows: [] })),
   ]);
 
   return {
     schools: schools.rows.map(mapSchool),
+    regions: regions.rows.map((r) => ({ id: r.id, name: r.name })),
+    moeCalendar: moeCalendarRows.rows.length ? mapMoeCalendarDraft(moeCalendarRows.rows[0]) : null,
     departments: departments.rows.map(mapDepartment),
     // PR-002: a teacher's personal phone is institutional-need-to-know — visible to
     // privileged staff and to the teacher's own record, masked for everyone else

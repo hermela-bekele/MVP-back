@@ -27,6 +27,7 @@ type TokenPayload = {
   sub: string;
   role: string;
   schoolId: string | null;
+  jti?: string;
   exp: number;
   iat: number;
 };
@@ -46,7 +47,8 @@ function fromB64url(input: string) {
 
 export function signAccessToken(
   user: { id: string; role: string; schoolId: string | null },
-  expiresInSec = 60 * 60 * 24 * 7
+  expiresInSec = 60 * 60 * 24 * 7,
+  sessionId?: string
 ) {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const now = Math.floor(Date.now() / 1000);
@@ -54,6 +56,7 @@ export function signAccessToken(
     sub: user.id,
     role: user.role,
     schoolId: user.schoolId,
+    ...(sessionId ? { jti: sessionId } : {}),
     iat: now,
     exp: now + expiresInSec,
   };

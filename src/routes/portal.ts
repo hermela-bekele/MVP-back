@@ -198,6 +198,27 @@ portalRouter.get(
   })
 );
 
+// School Head Staff Oversight (§27): real per-teacher weekly period counts from
+// the actual timetable, not a fabricated workload figure — aggregated
+// server-side so the frontend never has to fan out per class.
+portalRouter.get(
+  '/timetable/workload',
+  requireAuth,
+  requirePermission('hr.view_employees'),
+  asyncHandler(async (req, res) => {
+    const schoolId = (req.query.schoolId as string) || req.user!.schoolId;
+    const { rows } = await query(
+      `SELECT teacher_id AS "teacherId", teacher_name AS "teacherName", COUNT(*)::int AS "periodsPerWeek"
+       FROM timetable_slots
+       WHERE school_id = $1 AND teacher_id IS NOT NULL
+       GROUP BY teacher_id, teacher_name
+       ORDER BY "periodsPerWeek" DESC`,
+      [schoolId]
+    );
+    res.json(rows);
+  })
+);
+
 portalRouter.get(
   '/documents',
   requireAuth,

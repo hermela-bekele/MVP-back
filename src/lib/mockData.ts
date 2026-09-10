@@ -131,14 +131,17 @@ export interface TeacherTraining {
   status: 'Active' | 'Upcoming' | 'Completed';
 }
 
+export type SchoolCheckInConfidentiality = 'identified' | 'restricted' | 'anonymous';
+
 export interface SchoolCheckIn {
   id: string;
   title?: string;
-  type: 'Teacher Wellness' | 'Student Satisfaction' | 'Parent Feedback';
-  respondentName: string;
+  type: 'Teacher Wellness' | 'Student Satisfaction' | 'Parent Feedback' | 'School Climate' | 'Service Satisfaction';
+  respondentName?: string;
   rating: number; // 1-5
   comment: string;
   date: string;
+  confidentiality: SchoolCheckInConfidentiality;
 }
 
 // ----------------------------------------------------
@@ -831,12 +834,14 @@ export const mockTrainingPrograms: TeacherTraining[] = [
 ];
 
 export const mockCheckIns: SchoolCheckIn[] = [
-  { id: 'ch-1', type: 'Teacher Wellness', respondentName: 'Martha Feyissa', rating: 4, comment: 'Sufficient resources. AI tools have saved me hours of scheduling and typing!', date: '2026-05-18' },
-  { id: 'ch-2', type: 'Parent Feedback', respondentName: 'Abebe Demeke', rating: 5, comment: 'Extremely glad to see child grades instantly. AI advice helps me review math worksheets at home.', date: '2026-05-19' },
-  { id: 'ch-3', type: 'Student Satisfaction', respondentName: 'Selam Abebe', rating: 5, comment: 'AI Study Assistant explained fractions easily. The mock quiz was fun!', date: '2026-05-20' },
-  { id: 'ch-4', type: 'Teacher Wellness', respondentName: 'Abebe Kebede', rating: 4, comment: 'STEM lab scheduling is smoother this term. Need more graphing calculators for Grade 11.', date: '2026-05-17' },
-  { id: 'ch-5', type: 'Teacher Wellness', respondentName: 'W/ro Almaz Tekle', rating: 3, comment: 'Chemistry practical kits running low — reorder before midterm week.', date: '2026-05-16' },
-  { id: 'ch-6', type: 'Student Satisfaction', respondentName: 'Yonas Kassa', rating: 4, comment: 'Physics demonstrations in class 9-B were very clear this week.', date: '2026-05-19' },
+  { id: 'ch-1', type: 'Teacher Wellness', respondentName: 'Martha Feyissa', rating: 4, comment: 'Sufficient resources. AI tools have saved me hours of scheduling and typing!', date: '2026-05-18', confidentiality: 'identified' },
+  { id: 'ch-2', type: 'Parent Feedback', respondentName: 'Abebe Demeke', rating: 5, comment: 'Extremely glad to see child grades instantly. AI advice helps me review math worksheets at home.', date: '2026-05-19', confidentiality: 'identified' },
+  { id: 'ch-3', type: 'Student Satisfaction', respondentName: 'Selam Abebe', rating: 5, comment: 'AI Study Assistant explained fractions easily. The mock quiz was fun!', date: '2026-05-20', confidentiality: 'identified' },
+  { id: 'ch-4', type: 'Teacher Wellness', respondentName: 'Abebe Kebede', rating: 4, comment: 'STEM lab scheduling is smoother this term. Need more graphing calculators for Grade 11.', date: '2026-05-17', confidentiality: 'identified' },
+  { id: 'ch-5', type: 'Teacher Wellness', rating: 2, comment: 'Workload distribution across departments feels uneven this term — some of us are covering extra sections without support.', date: '2026-05-16', confidentiality: 'anonymous' },
+  { id: 'ch-7', type: 'School Climate', respondentName: 'Selamawit Girma', rating: 4, comment: 'Campus feels safe and well-maintained. The new signage in the science block helps a lot.', date: '2026-05-21', confidentiality: 'restricted' },
+  { id: 'ch-8', type: 'Service Satisfaction', respondentName: 'Belayneh Kassahun', rating: 3, comment: 'Cafeteria queue times during lunch are still long — consider a second serving line.', date: '2026-05-21', confidentiality: 'identified' },
+  { id: 'ch-6', type: 'Student Satisfaction', respondentName: 'Yonas Kassa', rating: 4, comment: 'Physics demonstrations in class 9-B were very clear this week.', date: '2026-05-19', confidentiality: 'identified' },
 ];
 
 // ----------------------------------------------------
