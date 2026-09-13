@@ -1127,6 +1127,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     comment:
       "Sufficient resources. AI tools have saved me hours of scheduling and typing!",
     date: "2026-05-18",
+    confidentiality: "identified",
   },
   {
     id: "ch-2",
@@ -1136,6 +1137,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     comment:
       "Extremely glad to see child grades instantly. AI advice helps me review math worksheets at home.",
     date: "2026-05-19",
+    confidentiality: "identified",
   },
   {
     id: "ch-3",
@@ -1145,6 +1147,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     comment:
       "AI Study Assistant explained fractions easily. The mock quiz was fun!",
     date: "2026-05-20",
+    confidentiality: "identified",
   },
   {
     id: "ch-4",
@@ -1154,6 +1157,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     comment:
       "STEM lab scheduling is smoother this term. Need more graphing calculators for Grade 11.",
     date: "2026-05-17",
+    confidentiality: "identified",
   },
   {
     id: "ch-5",
@@ -1163,6 +1167,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     comment:
       "Chemistry practical kits running low — reorder before midterm week.",
     date: "2026-05-16",
+    confidentiality: "identified",
   },
   {
     id: "ch-6",
@@ -1171,6 +1176,7 @@ export const mockCheckIns: SchoolCheckIn[] = [
     rating: 4,
     comment: "Physics demonstrations in class 9-B were very clear this week.",
     date: "2026-05-19",
+    confidentiality: "identified",
   },
 ];
 
