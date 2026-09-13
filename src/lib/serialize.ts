@@ -429,8 +429,11 @@ export function mapTrainingMaterial(row: Record<string, unknown>) {
     audience: row.audience ?? 'All',
     trainingType: row.training_type ?? undefined,
     departmentId: row.department_id ?? undefined,
+    schoolId: row.school_id ?? undefined,
     grade: row.grade ?? undefined,
     subject: row.subject ?? undefined,
+    code: row.code ?? undefined,
+    trainingPlanId: row.training_plan_id ?? undefined,
     disseminated: Boolean(row.disseminated),
     uploadedAt: d instanceof Date ? d.toISOString().split('T')[0] : String(d),
   };

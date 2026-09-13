@@ -15,11 +15,17 @@ CREATE TABLE IF NOT EXISTS regions (
 );
 INSERT INTO regions (id, name) VALUES
   ('reg-addis-ababa', 'Addis Ababa'),
-  ('reg-oromia', 'Oromia'),
+  ('reg-afar', 'Afar'),
   ('reg-amhara', 'Amhara'),
-  ('reg-tigray', 'Tigray'),
+  ('reg-benishangul-gumuz', 'Benishangul-Gumuz'),
+  ('reg-dire-dawa', 'Dire Dawa'),
+  ('reg-gambela', 'Gambela'),
+  ('reg-harari', 'Harari'),
+  ('reg-oromia', 'Oromia'),
   ('reg-sidama', 'Sidama'),
-  ('reg-snnpr', 'SNNPR')
+  ('reg-somali', 'Somali'),
+  ('reg-snnpr', 'SNNPR'),
+  ('reg-tigray', 'Tigray')
 ON CONFLICT (name) DO NOTHING;
 
 -- Prepares schools for future EMIS reconciliation (MOE EMIS -> authoritative

@@ -85,3 +85,16 @@ export async function ensureAssessmentSchema() {
     await pool.query(sql);
   }
 }
+
+/**
+ * Allow Resigned roster status for MOE departure notices (idempotent).
+ */
+export async function ensureTeacherStatusSchema() {
+  const statements = [
+    `ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_status_check`,
+    `ALTER TABLE teachers ADD CONSTRAINT teachers_status_check CHECK (status IN ('Active', 'On Leave', 'Left', 'Resigned'))`,
+  ];
+  for (const sql of statements) {
+    await pool.query(sql);
+  }
+}

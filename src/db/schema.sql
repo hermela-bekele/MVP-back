@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS teachers (
   phone TEXT NOT NULL,
   department_id TEXT REFERENCES departments(id),
   school_id TEXT REFERENCES schools(id),
-  status TEXT NOT NULL CHECK (status IN ('Active', 'On Leave', 'Left')),
+  status TEXT NOT NULL CHECK (status IN ('Active', 'On Leave', 'Left', 'Resigned')),
   subjects JSONB NOT NULL DEFAULT '[]',
   grades JSONB NOT NULL DEFAULT '[]',
   certification TEXT NOT NULL DEFAULT '',
@@ -44,9 +44,9 @@ CREATE TABLE IF NOT EXISTS teachers (
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS years_experience INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE teachers ADD COLUMN IF NOT EXISTS experience_override TEXT CHECK (experience_override IN ('new', 'experienced'));
 
--- Allow departed teachers (MOE replacement workflow). Idempotent for existing DBs.
+-- Allow departed / resigned teachers (MOE replacement workflow). Idempotent for existing DBs.
 ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_status_check;
-ALTER TABLE teachers ADD CONSTRAINT teachers_status_check CHECK (status IN ('Active', 'On Leave', 'Left'));
+ALTER TABLE teachers ADD CONSTRAINT teachers_status_check CHECK (status IN ('Active', 'On Leave', 'Left', 'Resigned'));
 
 -- STEP self-assessment: a teacher's self-rating against the competency rubric.
 CREATE TABLE IF NOT EXISTS teacher_self_assessments (
@@ -309,15 +309,21 @@ CREATE TABLE IF NOT EXISTS training_materials (
   category TEXT NOT NULL,
   training_type TEXT,
   department_id TEXT REFERENCES departments(id),
+  school_id TEXT REFERENCES schools(id),
   grade TEXT,
   subject TEXT,
+  code TEXT,
+  training_plan_id TEXT,
   disseminated BOOLEAN NOT NULL DEFAULT FALSE,
   uploaded_at DATE NOT NULL
 );
 
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS department_id TEXT REFERENCES departments(id);
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS school_id TEXT REFERENCES schools(id);
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS grade TEXT;
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS subject TEXT;
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS training_plan_id TEXT;
 ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS disseminated BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- HR-planned trainings: a scheduled Continuous Development track or In-Person session,
