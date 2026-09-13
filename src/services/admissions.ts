@@ -25,6 +25,11 @@ export type ApplicationStatus =
 
 const EDITABLE = new Set(['draft', 'submitted', 'info_requested', 'under_review']);
 
+// §31: the academic year an application belongs to. Not user-selectable on the
+// form — it's the current intake cycle, same "current year" assumption the
+// rest of the app already makes (see MOE_ACADEMIC_YEAR_EC on the frontend).
+export const DEFAULT_ACADEMIC_YEAR = '2018/2019 E.C.';
+
 export function mapApplication(row: Record<string, unknown>) {
   return {
     id: row.id,
@@ -57,6 +62,7 @@ export function mapApplication(row: Record<string, unknown>) {
     editLocked: row.edit_locked,
     reapplyOf: row.reapply_of,
     formTemplateId: row.form_template_id ?? undefined,
+    academicYear: row.academic_year ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     waitlistRank: row.waitlist_rank != null ? Number(row.waitlist_rank) : null,
@@ -161,6 +167,7 @@ export async function createApplication(input: {
   forceBackWaitlist?: boolean;
   consentAccepted?: boolean;
   formTemplateId?: string | null;
+  academicYear?: string;
 }) {
   if (input.submit && input.consentAccepted === false) {
     throw Object.assign(new Error('You must accept the privacy consent to apply'), { status: 400 });
@@ -221,8 +228,8 @@ export async function createApplication(input: {
     `INSERT INTO admission_applications (
       id, school_id, reference_code, parent_user_id, parent_id, applicant_name, date_of_birth,
       grade_applied, section_requested, parent_name, parent_phone, parent_email, emergency_contact,
-      medical_info, previous_school, source_channel, form_data, status, submitted_at, reapply_of, form_template_id
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      medical_info, previous_school, source_channel, form_data, status, submitted_at, reapply_of, form_template_id, academic_year
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
     [
       id,
       input.schoolId,
@@ -230,7 +237,7 @@ export async function createApplication(input: {
       input.parentUserId ?? null,
       parent.id,
       input.applicantName,
-      input.dateOfBirth ?? null,
+      input.dateOfBirth || null,
       input.gradeApplied,
       input.sectionRequested ?? null,
       input.parentName,
@@ -245,6 +252,7 @@ export async function createApplication(input: {
       input.submit ? new Date().toISOString() : null,
       input.reapplyOf ?? null,
       input.formTemplateId ?? null,
+      input.academicYear ?? DEFAULT_ACADEMIC_YEAR,
     ]
   );
 
@@ -318,7 +326,10 @@ export async function updateApplication(
 
   for (const [k, col] of Object.entries(map)) {
     if (updates[k] !== undefined) {
-      values.push(k === 'formData' ? JSON.stringify(updates[k]) : updates[k]);
+      // date_of_birth is a DATE column — an empty string from a cleared date
+      // input must become NULL, not '' (Postgres rejects '' for type date).
+      const value = k === 'formData' ? JSON.stringify(updates[k]) : k === 'dateOfBirth' ? (updates[k] || null) : updates[k];
+      values.push(value);
       fields.push(`${col} = $${values.length}`);
     }
   }

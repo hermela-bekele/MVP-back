@@ -14,6 +14,7 @@ export type AuthUser = {
   subject?: string;
   departmentId?: string;
   permissions?: string[];
+  sessionId?: string;
 };
 
 declare global {
@@ -24,7 +25,7 @@ declare global {
   }
 }
 
-async function loadUserById(userId: string): Promise<AuthUser | null> {
+async function loadUserById(userId: string, sessionId?: string): Promise<AuthUser | null> {
   const { rows } = await query(
     `SELECT id, email, role, display_name, school_id, linked_student_id, linked_parent_id, subject, department_id, is_active
      FROM portal_users WHERE id = $1`,
@@ -42,7 +43,21 @@ async function loadUserById(userId: string): Promise<AuthUser | null> {
     linkedParentId: u.linked_parent_id ?? null,
     subject: u.subject ?? undefined,
     departmentId: u.department_id ?? undefined,
+    sessionId,
   };
+}
+
+/** True if the session backing this token is still valid (exists, not revoked).
+ * Tokens issued before session tracking existed carry no jti and are grandfathered
+ * in — they simply expire naturally within their normal 7-day lifetime. */
+async function sessionIsValid(sessionId: string): Promise<boolean> {
+  const { rows } = await query(
+    'SELECT 1 FROM user_sessions WHERE id = $1 AND revoked_at IS NULL',
+    [sessionId]
+  );
+  if (!rows.length) return false;
+  query('UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1', [sessionId]).catch(() => {});
+  return true;
 }
 
 export async function resolveUserFromHeader(req: Request): Promise<AuthUser | null> {
@@ -50,7 +65,10 @@ export async function resolveUserFromHeader(req: Request): Promise<AuthUser | nu
   if (auth?.toLowerCase().startsWith('bearer ')) {
     const token = auth.slice(7).trim();
     const payload = verifyAccessToken(token);
-    if (payload?.sub) return loadUserById(payload.sub);
+    if (payload?.sub) {
+      if (payload.jti && !(await sessionIsValid(payload.jti))) return null;
+      return loadUserById(payload.sub, payload.jti);
+    }
   }
 
   // Legacy fallback during migration

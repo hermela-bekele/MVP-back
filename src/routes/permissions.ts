@@ -86,11 +86,15 @@ permissionsRouter.get(
   requirePermission('permissions.grant'),
   asyncHandler(async (req, res) => {
     const schoolId = (req.query.schoolId as string) || req.user!.schoolId;
+    const includeInactive = req.query.includeInactive === 'true';
     const params: unknown[] = [];
-    let sql = `SELECT id, email, role, display_name, school_id FROM portal_users WHERE is_active IS DISTINCT FROM FALSE`;
+    let sql = `SELECT id, email, role, display_name, school_id, is_active FROM portal_users WHERE 1=1`;
+    if (!includeInactive) sql += ` AND is_active IS DISTINCT FROM FALSE`;
     if (schoolId) {
+      // MOE accounts have no school_id (they're global, not "of" any school) and must
+      // never appear in — or be deactivatable from — an individual school's roster.
       params.push(schoolId);
-      sql += ` AND (school_id = $1 OR school_id IS NULL)`;
+      sql += ` AND school_id = $1`;
     }
     sql += ' ORDER BY role, display_name';
     const { rows } = await query(sql, params);
@@ -101,8 +105,37 @@ permissionsRouter.get(
         role: u.role,
         displayName: u.display_name,
         schoolId: u.school_id,
+        isActive: u.is_active !== false,
       }))
     );
+  })
+);
+
+permissionsRouter.patch(
+  '/users/:userId/status',
+  requireAuth,
+  requirePermission('users.manage'),
+  asyncHandler(async (req, res) => {
+    const userId = String(Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId);
+    if (userId === req.user!.id) {
+      res.status(400).json({ error: 'You cannot deactivate your own account' });
+      return;
+    }
+    const { rows: cur } = await query('SELECT is_active, school_id FROM portal_users WHERE id = $1', [userId]);
+    if (!cur.length) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    if (req.user!.role !== 'moe' && cur[0].school_id !== req.user!.schoolId) {
+      res.status(403).json({ error: 'Cross-school access denied' });
+      return;
+    }
+    const nextActive = cur[0].is_active === false;
+    await query('UPDATE portal_users SET is_active = $1 WHERE id = $2', [nextActive, userId]);
+    if (!nextActive) {
+      await query('UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+    }
+    res.json({ id: userId, isActive: nextActive });
   })
 );
 

@@ -4,6 +4,33 @@ ALTER TABLE schools ADD COLUMN IF NOT EXISTS slug TEXT;
 UPDATE schools SET slug = LOWER(REGEXP_REPLACE(code, '[^a-zA-Z0-9]+', '-', 'g')) WHERE slug IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_slug ON schools(slug);
 
+-- MOE's authoritative region catalog. `schools.region` stays a plain name column
+-- (changing it to a FK would touch every existing reader of that field); this table
+-- is instead the one source of truth the region dropdowns/filters must read from,
+-- replacing what used to be three separately-hardcoded, drifting region lists.
+CREATE TABLE IF NOT EXISTS regions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO regions (id, name) VALUES
+  ('reg-addis-ababa', 'Addis Ababa'),
+  ('reg-oromia', 'Oromia'),
+  ('reg-amhara', 'Amhara'),
+  ('reg-tigray', 'Tigray'),
+  ('reg-sidama', 'Sidama'),
+  ('reg-snnpr', 'SNNPR')
+ON CONFLICT (name) DO NOTHING;
+
+-- Prepares schools for future EMIS reconciliation (MOE EMIS -> authoritative
+-- registry -> PRIME matching -> activation) without pretending that integration
+-- is live today. Every school connected through the current manual flow is
+-- 'manual' with no emis_id; a real EMIS sync can later populate emis_id and
+-- flip the source once credentials/API access exist.
+ALTER TABLE schools ADD COLUMN IF NOT EXISTS registry_source TEXT NOT NULL DEFAULT 'manual' CHECK (registry_source IN ('manual', 'emis'));
+ALTER TABLE schools ADD COLUMN IF NOT EXISTS emis_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_emis_id ON schools(emis_id) WHERE emis_id IS NOT NULL;
+
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS school_id TEXT REFERENCES schools(id);
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS linked_student_id TEXT REFERENCES students(id);
@@ -139,6 +166,11 @@ CREATE TABLE IF NOT EXISTS admission_applications (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (school_id, reference_code)
 );
+
+-- §31: which intake cycle this application belongs to. Captured automatically
+-- at submission time (the applicant doesn't choose it) rather than added as
+-- another question on the form.
+ALTER TABLE admission_applications ADD COLUMN IF NOT EXISTS academic_year TEXT;
 
 CREATE TABLE IF NOT EXISTS admission_documents (
   id TEXT PRIMARY KEY,
@@ -457,4 +489,240 @@ CREATE TABLE IF NOT EXISTS reenrollment_invites (
   UNIQUE (campaign_id, student_id)
 );
 
+-- Login sessions, one row per issued access token (jti). Lets a user see where
+-- they're signed in and revoke a session individually or "everywhere else".
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
+  user_agent TEXT,
+  ip TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, revoked_at);
+
+-- School Administration > Integrations: real, persisted configuration per school.
+-- Saving marks a row 'configured' — this only records the settings an admin entered;
+-- it does not attempt to contact any external system (no live EMIS/SMS/email
+-- credentials exist yet), so status never claims a verified connection.
+CREATE TABLE IF NOT EXISTS school_integrations (
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  integration_type TEXT NOT NULL CHECK (integration_type IN ('emis', 'sms', 'email')),
+  status TEXT NOT NULL DEFAULT 'not_configured' CHECK (status IN ('not_configured', 'configured', 'disabled')),
+  config JSONB NOT NULL DEFAULT '{}',
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (school_id, integration_type)
+);
+
 ALTER TABLE school_settings ADD COLUMN IF NOT EXISTS report_card_template JSONB NOT NULL DEFAULT '{}';
+
+-- MOE Documents: national policy/curriculum/compliance documents MOE uploads and
+-- manages. `audience` is categorization only (All/Regional/Woredas/Schools) — there
+-- is no automatic distribution/visibility logic tied to it (see MOE requirements
+-- §11), so this stays a MOE-portal-managed catalog for now, not a subscriber feed.
+CREATE TABLE IF NOT EXISTS moe_documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN (
+    'Policy', 'Syllabus', 'Curriculum Framework', 'Text Books', 'Teachers Guide',
+    'Training Manuals', 'Compliance Checklist', 'Directives', 'SOP',
+    'Assessment Blueprint', 'Exam Guideline', 'Annual Performance Report',
+    'Audit and Inspection Reports', 'Budget Allocation'
+  )),
+  audience TEXT NOT NULL DEFAULT 'All' CHECK (audience IN ('All', 'Regional', 'Woredas', 'Schools')),
+  file_url TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_size INTEGER,
+  uploaded_by TEXT REFERENCES portal_users(id),
+  uploaded_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_moe_documents_category ON moe_documents(category);
+CREATE INDEX IF NOT EXISTS idx_moe_documents_created ON moe_documents(created_at DESC);
+
+-- Training resources/programs: MOE needs the same audience categorization used for
+-- MOE Documents, plus a real description field for resources and a subject-matter
+-- category for programs (distinct from `training_plans.type`, which is delivery
+-- mode: continuous_development vs in_person).
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE training_materials ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'All' CHECK (audience IN ('All', 'Regional', 'Woredas', 'Schools'));
+ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'All' CHECK (audience IN ('All', 'Regional', 'Woredas', 'Schools'));
+
+-- Leadership Actions: one general-purpose structured-action entity backing both
+-- the School Head dashboard's "Leadership Attention & Actions" exception queue
+-- (category='exception') and "School Improvement & Quality" initiative tracker
+-- (category='improvement_initiative', which additionally uses progress_percent).
+-- Deliberately one table, not two near-identical ones — and this same table is
+-- meant to be reused later for turning a formal communication into a tracked
+-- action (see cross-portal requirement on formal actions from messages).
+CREATE TABLE IF NOT EXISTS leadership_actions (
+  id TEXT PRIMARY KEY,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  category TEXT NOT NULL DEFAULT 'exception' CHECK (category IN ('exception', 'improvement_initiative')),
+  issue TEXT NOT NULL,
+  evidence TEXT,
+  source TEXT,
+  severity TEXT NOT NULL DEFAULT 'Medium' CHECK (severity IN ('Low', 'Medium', 'High', 'Critical')),
+  owner TEXT,
+  decision_required TEXT,
+  recommended_action TEXT,
+  due_date DATE,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved')),
+  progress_percent INTEGER CHECK (progress_percent BETWEEN 0 AND 100),
+  created_by TEXT REFERENCES portal_users(id),
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_leadership_actions_school ON leadership_actions(school_id, category, status);
+
+-- School Resource Library: lets a School Head catalog resources that are
+-- external to the platform (a publisher's site, a third-party LMS course, a
+-- government portal, etc.) so they can be classified alongside the other
+-- resource sources already visible in the school head's Resource Library view
+-- (MOE-issued documents, department-disseminated training materials, teacher
+-- uploads approved through the existing review workflow, and PRIME's own
+-- built-in programme modules — none of which needed a new table). This table
+-- exists only for the one source that had no home anywhere else: resources
+-- that live outside the platform and that the school has vetted for use.
+CREATE TABLE IF NOT EXISTS school_resources (
+  id TEXT PRIMARY KEY,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  url TEXT NOT NULL,
+  grade TEXT,
+  subject TEXT,
+  added_by TEXT REFERENCES portal_users(id),
+  added_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_school_resources_school ON school_resources(school_id, created_at DESC);
+
+-- Regulatory Engine: MOE issues a compliance requirement (a policy directive,
+-- a reporting obligation, an inspection prerequisite, etc.) once, and every
+-- school tracks its own status against it in a separate per-school row —
+-- mirrors the moe_documents / school_resources split (one MOE-authored
+-- catalog, many school-scoped tracking rows) rather than duplicating the
+-- requirement text per school.
+CREATE TABLE IF NOT EXISTS compliance_requirements (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  authority TEXT NOT NULL,
+  due_date DATE,
+  evidence_required TEXT,
+  audience TEXT NOT NULL DEFAULT 'Schools' CHECK (audience IN ('All', 'Regional', 'Woredas', 'Schools')),
+  created_by TEXT REFERENCES portal_users(id),
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_requirements_due ON compliance_requirements(due_date);
+
+CREATE TABLE IF NOT EXISTS school_compliance_status (
+  id TEXT PRIMARY KEY,
+  requirement_id TEXT NOT NULL REFERENCES compliance_requirements(id) ON DELETE CASCADE,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'Not Started' CHECK (status IN ('Not Started', 'In Progress', 'Submitted', 'Verified', 'Rejected')),
+  responsible_person TEXT,
+  evidence_submitted_url TEXT,
+  evidence_submitted_at TIMESTAMPTZ,
+  outstanding_issue TEXT,
+  verified_by TEXT REFERENCES portal_users(id),
+  verified_by_name TEXT,
+  verified_at TIMESTAMPTZ,
+  verification_note TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (requirement_id, school_id)
+);
+CREATE INDEX IF NOT EXISTS idx_school_compliance_status_school ON school_compliance_status(school_id);
+CREATE INDEX IF NOT EXISTS idx_school_compliance_status_requirement ON school_compliance_status(requirement_id);
+
+-- Message MOE: a real, persisted case-numbered thread per school, replacing
+-- the session-local chat that used to live entirely in component state.
+-- Read status is tracked as two timestamps rather than per-message flags —
+-- a message is unread by a party if it postdates that party's last-read mark
+-- and wasn't sent by them.
+CREATE TABLE IF NOT EXISTS moe_message_threads (
+  id TEXT PRIMARY KEY,
+  reference_number TEXT NOT NULL UNIQUE,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'awaiting_moe', 'awaiting_school', 'resolved', 'closed')),
+  created_by TEXT REFERENCES portal_users(id),
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  school_last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  moe_last_read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_moe_message_threads_school ON moe_message_threads(school_id, last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS moe_thread_messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES moe_message_threads(id) ON DELETE CASCADE,
+  sender_user_id TEXT REFERENCES portal_users(id),
+  sender_role TEXT NOT NULL CHECK (sender_role IN ('school-head', 'moe')),
+  sender_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_moe_thread_messages_thread ON moe_thread_messages(thread_id, created_at);
+
+-- MOE Academic Calendar (§6): the national reference calendar MOE disseminates.
+-- Previously this lived only in each browser's localStorage — MOE publishing
+-- it on one machine never reached anyone else's session at all. This table is
+-- the real, shared source of truth: MOE sees its own latest draft (Draft or
+-- Published) so it can resume editing; every other role only ever sees the
+-- latest Published row (enforced in the route, not just the UI).
+CREATE TABLE IF NOT EXISTS moe_calendar_drafts (
+  id TEXT PRIMARY KEY,
+  academic_year TEXT NOT NULL,
+  title TEXT NOT NULL,
+  events JSONB NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Published')),
+  created_by TEXT REFERENCES portal_users(id),
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  published_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_moe_calendar_drafts_created ON moe_calendar_drafts(created_at DESC);
+
+-- Government (Public) school departure notice + MOE teacher replacement assignment.
+CREATE TABLE IF NOT EXISTS teacher_replacement_requests (
+  id TEXT PRIMARY KEY,
+  school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  departing_teacher_id TEXT NOT NULL REFERENCES teachers(id),
+  departure_date DATE NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('resignation', 'transfer', 'retirement', 'other')),
+  subjects_needed JSONB NOT NULL DEFAULT '[]',
+  grade_levels_needed JSONB NOT NULL DEFAULT '[]',
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'under_review', 'assigned', 'rejected', 'cancelled')),
+  assigned_teacher_id TEXT REFERENCES teachers(id),
+  moe_reviewed_by TEXT REFERENCES portal_users(id),
+  moe_notes TEXT,
+  moe_thread_id TEXT REFERENCES moe_message_threads(id),
+  created_by TEXT REFERENCES portal_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_teacher_replacement_requests_school
+  ON teacher_replacement_requests(school_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_teacher_replacement_requests_status
+  ON teacher_replacement_requests(status, created_at DESC);
+
+INSERT INTO permissions (code, label, module, description)
+VALUES
+  ('staffing.request', 'Request MOE teacher replacement (Public schools)', 'hr', ''),
+  ('staffing.assign', 'Assign / transfer teachers for Public schools', 'hr', '')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO role_permissions (role, permission_code, school_id)
+SELECT 'school-head', 'staffing.request', id FROM schools
+ON CONFLICT DO NOTHING;

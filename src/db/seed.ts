@@ -261,8 +261,8 @@ async function seed() {
 
   for (const ch of mockCheckIns) {
     await query(
-      `INSERT INTO school_check_ins (id, title, type, respondent_name, rating, comment, date) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [ch.id, ch.title ?? null, ch.type, ch.respondentName, ch.rating, ch.comment, ch.date]
+      `INSERT INTO school_check_ins (id, title, type, respondent_name, rating, comment, date, confidentiality) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [ch.id, ch.title ?? null, ch.type, ch.confidentiality === 'anonymous' ? null : (ch.respondentName ?? null), ch.rating, ch.comment, ch.date, ch.confidentiality]
     );
   }
 

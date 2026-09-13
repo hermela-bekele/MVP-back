@@ -25,6 +25,49 @@ async function resolveOwnTeacherId(user: AuthUser): Promise<string> {
 
 const ELEVATED_ROLES = new Set(['department-head', 'head-of-academics', 'school-head']);
 
+const APPROVAL_WINDOW_HOURS = 48;
+
+/** If an approved edit window expired without resubmit, restore the prior lock status. */
+async function expireApprovedWindowsForScope(scope: {
+  subject: string;
+  gradeLevel: string;
+  section: string;
+  term: string;
+  academicYear?: string;
+}) {
+  const params: unknown[] = [scope.subject, scope.gradeLevel, scope.section, scope.term];
+  let yearClause = '';
+  if (scope.academicYear) {
+    params.push(scope.academicYear);
+    yearClause = ` AND academic_year = $${params.length}`;
+  }
+  const { rows: expired } = await query(
+    `SELECT * FROM result_change_requests
+     WHERE subject = $1 AND grade_level = $2 AND section = $3 AND term = $4
+       ${yearClause}
+       AND status = 'approved'
+       AND expires_at IS NOT NULL AND expires_at < NOW()`,
+    params
+  );
+  for (const req of expired) {
+    const restore = (req.previous_status as string) || 'submitted';
+    await query(
+      `UPDATE subject_term_results
+       SET status = $1,
+           submitted_at = CASE WHEN $1 = 'submitted' THEN COALESCE(submitted_at, NOW()) ELSE submitted_at END,
+           finalized_at = CASE WHEN $1 = 'finalized' THEN COALESCE(finalized_at, NOW()) ELSE finalized_at END,
+           updated_at = NOW()
+       WHERE subject = $2 AND grade_level = $3 AND section = $4 AND academic_year = $5 AND term = $6
+         AND status = 'draft'`,
+      [restore, req.subject, req.grade_level, req.section, req.academic_year, req.term]
+    );
+    await query(
+      `UPDATE result_change_requests SET status = 'expired', updated_at = NOW() WHERE id = $1`,
+      [req.id]
+    );
+  }
+}
+
 /** Used by the /grade-entries write path (api.ts) to block edits once a subject/term is locked. */
 export async function isSubjectTermLocked(scope: {
   studentId: string;
@@ -33,6 +76,12 @@ export async function isSubjectTermLocked(scope: {
   section: string;
   term: string;
 }): Promise<boolean> {
+  await expireApprovedWindowsForScope({
+    subject: scope.subject,
+    gradeLevel: scope.gradeLevel,
+    section: scope.section,
+    term: scope.term,
+  });
   const { rows } = await query(
     `SELECT status FROM subject_term_results
      WHERE student_id = $1 AND subject = $2 AND grade_level = $3 AND section = $4 AND term = $5
@@ -41,6 +90,67 @@ export async function isSubjectTermLocked(scope: {
   );
   const status = rows[0]?.status;
   return status === 'submitted' || status === 'finalized';
+}
+
+function mapResultChangeRequest(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    schoolId: row.school_id ?? null,
+    teacherId: row.teacher_id,
+    subject: row.subject,
+    gradeLevel: row.grade_level,
+    section: row.section,
+    academicYear: row.academic_year,
+    term: row.term,
+    reason: row.reason,
+    status: row.status,
+    previousStatus: row.previous_status ?? null,
+    source: row.source,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    reviewNote: row.review_note ?? null,
+    expiresAt: row.expires_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    teacherName: row.teacher_name ?? undefined,
+  };
+}
+
+async function unlockSubjectScope(opts: {
+  subject: string;
+  gradeLevel: string;
+  section: string;
+  academicYear: string;
+  term: string;
+}): Promise<{ unlocked: number; previousStatus: 'submitted' | 'finalized' | null }> {
+  const { rows: sample } = await query(
+    `SELECT status FROM subject_term_results
+     WHERE subject = $1 AND grade_level = $2 AND section = $3 AND academic_year = $4 AND term = $5
+       AND status IN ('submitted', 'finalized')
+     LIMIT 1`,
+    [opts.subject, opts.gradeLevel, opts.section, opts.academicYear, opts.term]
+  );
+  const previousStatus = (sample[0]?.status as 'submitted' | 'finalized' | undefined) ?? null;
+
+  const { rows: unlocked } = await query(
+    `UPDATE subject_term_results
+     SET status = 'draft', submitted_at = NULL, submitted_by = NULL, finalized_at = NULL, finalized_by = NULL, updated_at = NOW()
+     WHERE subject = $1 AND grade_level = $2 AND section = $3 AND academic_year = $4 AND term = $5
+       AND status IN ('submitted', 'finalized')
+     RETURNING id`,
+    [opts.subject, opts.gradeLevel, opts.section, opts.academicYear, opts.term]
+  );
+
+  // Rankings are class/term-wide; clearing them when any subject is unlocked keeps report cards honest.
+  if (previousStatus === 'finalized') {
+    await query(
+      `DELETE FROM student_term_summaries
+       WHERE grade_level = $1 AND section = $2 AND academic_year = $3 AND term = $4`,
+      [opts.gradeLevel, opts.section, opts.academicYear, opts.term]
+    );
+  }
+
+  return { unlocked: unlocked.length, previousStatus };
 }
 
 function mapSubjectTermResult(row: Record<string, unknown>) {
@@ -170,7 +280,7 @@ academicResultsRouter.post(
       );
       if (!canOverride) {
         res.status(409).json({
-          error: 'These results are already finalized. Ask your Academic Head to reopen them before resubmitting.',
+          error: 'These results are already finalized. Request edit approval from your Academic Head before resubmitting.',
         });
         return;
       }
@@ -194,6 +304,15 @@ academicResultsRouter.post(
       );
       results.push(mapSubjectTermResult(rows[0]));
     }
+
+    // Any approved edit window for this scope is now consumed by the resubmit.
+    await query(
+      `UPDATE result_change_requests
+       SET status = 'consumed', updated_at = NOW()
+       WHERE teacher_id = $1 AND subject = $2 AND grade_level = $3 AND section = $4
+         AND academic_year = $5 AND term = $6 AND status = 'approved'`,
+      [teacherId, b.subject, b.gradeLevel, b.section, academicYear, b.term]
+    );
 
     await writeAudit({
       schoolId,
@@ -412,7 +531,8 @@ academicResultsRouter.post(
   })
 );
 
-// POST /academic-results/reopen  { gradeLevel, section, academicYear, term }
+// POST /academic-results/reopen  { gradeLevel, section, academicYear, term, reason?, subject? }
+// Emergency Academic Head unlock. Prefer change-request approve for the normal path.
 academicResultsRouter.post(
   '/reopen',
   requireAuth,
@@ -420,37 +540,344 @@ academicResultsRouter.post(
   enforceSchoolScope,
   asyncHandler(async (req, res) => {
     const user = req.user!;
-    const b = req.body as { gradeLevel?: string; section?: string; academicYear?: string; term?: string };
+    const b = req.body as {
+      gradeLevel?: string;
+      section?: string;
+      academicYear?: string;
+      term?: string;
+      reason?: string;
+      subject?: string;
+    };
     if (!b.gradeLevel || !b.section || !b.academicYear || !b.term) {
       res.status(400).json({ error: 'gradeLevel, section, academicYear and term are required' });
       return;
     }
+    if (!b.reason || !String(b.reason).trim()) {
+      res.status(400).json({ error: 'reason is required for emergency unlock' });
+      return;
+    }
     const schoolId = (req.body.schoolId as string | undefined) ?? user.schoolId ?? null;
 
-    // Reopen releases the edit lock back to the teacher entirely (draft, not submitted) —
-    // 'submitted' is just as locked as 'finalized' from a teacher's perspective (see
-    // isSubjectTermLocked below), so leaving it at 'submitted' would reopen nothing for them.
+    const subjectFilter = b.subject ? ' AND subject = $5' : '';
+    const params: unknown[] = [b.gradeLevel, b.section, b.academicYear, b.term];
+    if (b.subject) params.push(b.subject);
+
+    const { rows: lockedRows } = await query(
+      `SELECT DISTINCT subject, teacher_id FROM subject_term_results
+       WHERE grade_level = $1 AND section = $2 AND academic_year = $3 AND term = $4
+         AND status IN ('submitted', 'finalized')${subjectFilter}`,
+      params
+    );
+
     const { rows: reopened } = await query(
       `UPDATE subject_term_results
        SET status = 'draft', submitted_at = NULL, submitted_by = NULL, finalized_at = NULL, finalized_by = NULL, updated_at = NOW()
-       WHERE grade_level = $1 AND section = $2 AND academic_year = $3 AND term = $4 AND status = 'finalized'
+       WHERE grade_level = $1 AND section = $2 AND academic_year = $3 AND term = $4
+         AND status IN ('submitted', 'finalized')${subjectFilter}
        RETURNING *`,
-      [b.gradeLevel, b.section, b.academicYear, b.term]
+      params
     );
     await query(
       `DELETE FROM student_term_summaries WHERE grade_level = $1 AND section = $2 AND academic_year = $3 AND term = $4`,
       [b.gradeLevel, b.section, b.academicYear, b.term]
     );
 
+    const expiresAt = new Date(Date.now() + APPROVAL_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+    for (const row of lockedRows) {
+      const id = newId('rcr');
+      await query(
+        `INSERT INTO result_change_requests
+           (id, school_id, teacher_id, subject, grade_level, section, academic_year, term, reason, status,
+            previous_status, source, reviewed_by, reviewed_at, review_note, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'approved',$10,'academic_head_direct',$11,NOW(),$12,$13)`,
+        [
+          id,
+          schoolId,
+          row.teacher_id ?? 'tch-1',
+          row.subject,
+          b.gradeLevel,
+          b.section,
+          b.academicYear,
+          b.term,
+          String(b.reason).trim(),
+          'finalized',
+          user.id,
+          'Emergency unlock by Academic Head',
+          expiresAt,
+        ]
+      );
+    }
+
     await writeAudit({
       schoolId,
       actorUserId: user.id,
       action: 'academic_results.reopen',
       entityType: 'subject_term_results',
-      metadata: { gradeLevel: b.gradeLevel, section: b.section, academicYear: b.academicYear, term: b.term, count: reopened.length },
+      metadata: {
+        gradeLevel: b.gradeLevel,
+        section: b.section,
+        academicYear: b.academicYear,
+        term: b.term,
+        subject: b.subject ?? null,
+        reason: b.reason,
+        count: reopened.length,
+      },
     });
 
     res.json({ reopened: reopened.map(mapSubjectTermResult) });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Result change requests (teacher → Academic Head)
+// ---------------------------------------------------------------------------
+
+academicResultsRouter.post(
+  '/change-requests',
+  requireAuth,
+  requirePermission('grades.enter'),
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const b = req.body as {
+      subject?: string;
+      gradeLevel?: string;
+      section?: string;
+      term?: string;
+      academicYear?: string;
+      reason?: string;
+      teacherId?: string;
+    };
+    if (!b.subject || !b.gradeLevel || !b.section || !b.term || !b.reason?.trim()) {
+      res.status(400).json({ error: 'subject, gradeLevel, section, term and reason are required' });
+      return;
+    }
+
+    let teacherId: string;
+    if (user.role === 'teacher') {
+      teacherId = await resolveOwnTeacherId(user);
+    } else if (ELEVATED_ROLES.has(user.role) && b.teacherId) {
+      teacherId = b.teacherId;
+    } else {
+      res.status(403).json({ error: 'Only the subject teacher can request edit approval' });
+      return;
+    }
+
+    const academicYear = b.academicYear || currentAcademicYear();
+    const schoolId = (req.body.schoolId as string | undefined) ?? user.schoolId ?? null;
+
+    const { rows: locked } = await query(
+      `SELECT status FROM subject_term_results
+       WHERE teacher_id = $1 AND subject = $2 AND grade_level = $3 AND section = $4
+         AND academic_year = $5 AND term = $6 AND status IN ('submitted', 'finalized')
+       LIMIT 1`,
+      [teacherId, b.subject, b.gradeLevel, b.section, academicYear, b.term]
+    );
+    if (!locked.length) {
+      res.status(400).json({ error: 'No submitted or finalized results found for this scope' });
+      return;
+    }
+
+    const { rows: existingPending } = await query(
+      `SELECT id FROM result_change_requests
+       WHERE teacher_id = $1 AND subject = $2 AND grade_level = $3 AND section = $4
+         AND academic_year = $5 AND term = $6 AND status IN ('pending', 'approved')
+       LIMIT 1`,
+      [teacherId, b.subject, b.gradeLevel, b.section, academicYear, b.term]
+    );
+    if (existingPending.length) {
+      res.status(409).json({ error: 'An open change request already exists for this subject/term' });
+      return;
+    }
+
+    const id = newId('rcr');
+    const { rows } = await query(
+      `INSERT INTO result_change_requests
+         (id, school_id, teacher_id, subject, grade_level, section, academic_year, term, reason, status, previous_status, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,'teacher')
+       RETURNING *`,
+      [
+        id,
+        schoolId,
+        teacherId,
+        b.subject,
+        b.gradeLevel,
+        b.section,
+        academicYear,
+        b.term,
+        b.reason.trim(),
+        locked[0].status,
+      ]
+    );
+
+    await writeAudit({
+      schoolId,
+      actorUserId: user.id,
+      action: 'academic_results.change_request.create',
+      entityType: 'result_change_requests',
+      entityId: id,
+      metadata: { subject: b.subject, gradeLevel: b.gradeLevel, section: b.section, term: b.term },
+    });
+
+    res.status(201).json(mapResultChangeRequest(rows[0]));
+  })
+);
+
+academicResultsRouter.get(
+  '/change-requests',
+  requireAuth,
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const q = req.query as Record<string, string | undefined>;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (user.role === 'teacher') {
+      const teacherId = await resolveOwnTeacherId(user);
+      params.push(teacherId);
+      conditions.push(`r.teacher_id = $${params.length}`);
+    } else {
+      const canReview = await import('../lib/permissions.js').then((m) =>
+        m.userHasPermission(user.id, user.role, user.schoolId, 'grades.finalize')
+      );
+      if (!canReview) {
+        res.status(403).json({ error: 'Not authorized to list change requests' });
+        return;
+      }
+      const schoolId = q.schoolId || user.schoolId;
+      if (schoolId) {
+        params.push(schoolId);
+        conditions.push(`r.school_id = $${params.length}`);
+      }
+    }
+
+    if (q.status) {
+      params.push(q.status);
+      conditions.push(`r.status = $${params.length}`);
+    }
+    if (q.subject) {
+      params.push(q.subject);
+      conditions.push(`r.subject = $${params.length}`);
+    }
+    if (q.gradeLevel) {
+      params.push(q.gradeLevel);
+      conditions.push(`r.grade_level = $${params.length}`);
+    }
+    if (q.section) {
+      params.push(q.section);
+      conditions.push(`r.section = $${params.length}`);
+    }
+    if (q.term) {
+      params.push(q.term);
+      conditions.push(`r.term = $${params.length}`);
+    }
+    if (q.academicYear) {
+      params.push(q.academicYear);
+      conditions.push(`r.academic_year = $${params.length}`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await query(
+      `SELECT r.*, t.name AS teacher_name
+       FROM result_change_requests r
+       LEFT JOIN teachers t ON t.id = r.teacher_id
+       ${where}
+       ORDER BY r.created_at DESC
+       LIMIT 200`,
+      params
+    );
+    res.json(rows.map(mapResultChangeRequest));
+  })
+);
+
+academicResultsRouter.post(
+  '/change-requests/:id/approve',
+  requireAuth,
+  requirePermission('grades.finalize'),
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const note = typeof req.body?.reviewNote === 'string' ? req.body.reviewNote.trim() : null;
+
+    const { rows: existing } = await query('SELECT * FROM result_change_requests WHERE id = $1', [req.params.id]);
+    if (!existing.length) {
+      res.status(404).json({ error: 'Change request not found' });
+      return;
+    }
+    const reqRow = existing[0];
+    if (reqRow.status !== 'pending') {
+      res.status(409).json({ error: `Request is already ${reqRow.status}` });
+      return;
+    }
+
+    const unlock = await unlockSubjectScope({
+      subject: reqRow.subject as string,
+      gradeLevel: reqRow.grade_level as string,
+      section: reqRow.section as string,
+      academicYear: reqRow.academic_year as string,
+      term: reqRow.term as string,
+    });
+
+    const expiresAt = new Date(Date.now() + APPROVAL_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+    const { rows } = await query(
+      `UPDATE result_change_requests
+       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_note = $2,
+           expires_at = $3, previous_status = COALESCE(previous_status, $4), updated_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [user.id, note, expiresAt, unlock.previousStatus, req.params.id]
+    );
+
+    await writeAudit({
+      schoolId: (reqRow.school_id as string) ?? user.schoolId ?? null,
+      actorUserId: user.id,
+      action: 'academic_results.change_request.approve',
+      entityType: 'result_change_requests',
+      entityId: req.params.id as string,
+      metadata: { unlocked: unlock.unlocked, expiresAt },
+    });
+
+    res.json(mapResultChangeRequest(rows[0]));
+  })
+);
+
+academicResultsRouter.post(
+  '/change-requests/:id/reject',
+  requireAuth,
+  requirePermission('grades.finalize'),
+  enforceSchoolScope,
+  asyncHandler(async (req, res) => {
+    const user = req.user!;
+    const note = typeof req.body?.reviewNote === 'string' ? req.body.reviewNote.trim() : null;
+
+    const { rows: existing } = await query('SELECT * FROM result_change_requests WHERE id = $1', [req.params.id]);
+    if (!existing.length) {
+      res.status(404).json({ error: 'Change request not found' });
+      return;
+    }
+    if (existing[0].status !== 'pending') {
+      res.status(409).json({ error: `Request is already ${existing[0].status}` });
+      return;
+    }
+
+    const { rows } = await query(
+      `UPDATE result_change_requests
+       SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), review_note = $2, updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [user.id, note, req.params.id]
+    );
+
+    await writeAudit({
+      schoolId: (existing[0].school_id as string) ?? user.schoolId ?? null,
+      actorUserId: user.id,
+      action: 'academic_results.change_request.reject',
+      entityType: 'result_change_requests',
+      entityId: req.params.id as string,
+    });
+
+    res.json(mapResultChangeRequest(rows[0]));
   })
 );
 

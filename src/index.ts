@@ -5,6 +5,7 @@ import http from 'http';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { ensurePortalAuthSchema, ensureRegistrationFormsSchema, ensureAcademicResultsSchema, ensureAssessmentSchema } from './db/ensureSchema.js';
+import { ensurePortalAuthSchema, ensureRegistrationFormsSchema, ensureAcademicResultsSchema, ensureTeacherStaffingSchema } from './db/ensureSchema.js';
 import { apiRouter } from './routes/api.js';
 import { uploadsDir } from './lib/uploads.js';
 import { initCommunityRealtime } from './lib/communityRealtime.js';
@@ -65,6 +66,7 @@ async function start() {
     await ensureRegistrationFormsSchema();
     await ensureAcademicResultsSchema();
     await ensureAssessmentSchema();
+    await ensureTeacherStaffingSchema();
     console.log('Portal auth schema verified.');
   } catch (err) {
     console.error('PostgreSQL connection failed:', err);
