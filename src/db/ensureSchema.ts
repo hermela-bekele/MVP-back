@@ -61,49 +61,25 @@ export async function ensureAcademicResultsSchema() {
 }
 
 /**
- * Idempotent teacher-status + MOE replacement request tables for Public-school
- * departure / assignment workflow.
+ * Idempotent assessment workflow columns for databases created before reviewer
+ * gating and draft saving were introduced.
  */
-export async function ensureTeacherStaffingSchema() {
+export async function ensureAssessmentSchema() {
   const statements = [
-    `DO $$ BEGIN
-       ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_status_check;
-       ALTER TABLE teachers ADD CONSTRAINT teachers_status_check CHECK (status IN ('Active', 'On Leave', 'Left'));
-     EXCEPTION
-       WHEN duplicate_object THEN NULL;
-     END $$`,
-    `CREATE TABLE IF NOT EXISTS teacher_replacement_requests (
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS covered_teaching_note_ids JSONB NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS moderation_rubric JSONB`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS review_department_id TEXT REFERENCES departments(id) ON DELETE SET NULL`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS created_by_role TEXT NOT NULL DEFAULT 'teacher'`,
+    `CREATE TABLE IF NOT EXISTS assessment_reviewers (
       id TEXT PRIMARY KEY,
-      school_id TEXT NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-      departing_teacher_id TEXT NOT NULL REFERENCES teachers(id),
-      departure_date DATE NOT NULL,
-      reason TEXT NOT NULL CHECK (reason IN ('resignation', 'transfer', 'retirement', 'other')),
-      subjects_needed JSONB NOT NULL DEFAULT '[]',
-      grade_levels_needed JSONB NOT NULL DEFAULT '[]',
-      notes TEXT,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'under_review', 'assigned', 'rejected', 'cancelled')),
-      assigned_teacher_id TEXT REFERENCES teachers(id),
-      moe_reviewed_by TEXT REFERENCES portal_users(id),
-      moe_notes TEXT,
-      moe_thread_id TEXT REFERENCES moe_message_threads(id),
-      created_by TEXT REFERENCES portal_users(id),
+      department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+      teacher_id TEXT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      granted_by TEXT REFERENCES portal_users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      resolved_at TIMESTAMPTZ
+      UNIQUE (department_id, teacher_id)
     )`,
-    `CREATE INDEX IF NOT EXISTS idx_teacher_replacement_requests_school
-      ON teacher_replacement_requests(school_id, status, created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_teacher_replacement_requests_status
-      ON teacher_replacement_requests(status, created_at DESC)`,
-    `INSERT INTO permissions (code, label, module, description)
-     VALUES
-       ('staffing.request', 'Request MOE teacher replacement (Public schools)', 'hr', ''),
-       ('staffing.assign', 'Assign / transfer teachers for Public schools', 'hr', '')
-     ON CONFLICT (code) DO NOTHING`,
-    `INSERT INTO role_permissions (role, permission_code, school_id)
-     SELECT 'school-head', 'staffing.request', id FROM schools
-     ON CONFLICT DO NOTHING`,
+    `CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_teacher ON assessment_reviewers(teacher_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_department ON assessment_reviewers(department_id)`,
   ];
   for (const sql of statements) {
     await pool.query(sql);

@@ -88,7 +88,11 @@ export async function loadBootstrap(caller: AuthUser) {
     query('SELECT * FROM students ORDER BY name'),
     query('SELECT * FROM school_classes ORDER BY grade, section'),
     query('SELECT * FROM lesson_plans ORDER BY created_at DESC'),
-    query('SELECT * FROM assessments ORDER BY created_at DESC'),
+    query(
+      caller.role === 'department-head'
+        ? `SELECT * FROM assessments WHERE status <> 'Draft' ORDER BY created_at DESC`
+        : 'SELECT * FROM assessments ORDER BY created_at DESC',
+    ),
     query('SELECT * FROM attendance ORDER BY date DESC'),
     query('SELECT * FROM teacher_trainings ORDER BY start_date'),
     query('SELECT * FROM school_check_ins ORDER BY date DESC'),
