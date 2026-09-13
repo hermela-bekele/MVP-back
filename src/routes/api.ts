@@ -274,11 +274,11 @@ async function createMentionNotifications(
   }
 }
 
-/** Quizzes/baselines never need approval; HoD-authored exams are ready immediately. */
+/** Quizzes, baselines, and teacher assignments are saved immediately; HoD-authored exams are ready immediately. */
 function assessmentInitialStatus(type: string, createdByRole?: string): string {
   const role = (createdByRole || 'teacher').toLowerCase();
   if (role === 'department-head' || role === 'hod') return 'Approved';
-  if (type === 'Quiz' || type === 'Baseline') return 'Approved';
+  if (type === 'Quiz' || type === 'Baseline' || type === 'Assignment') return 'Approved';
   return 'Pending Dept Head';
 }
 
@@ -1098,10 +1098,12 @@ apiRouter.post(
       if (reviewerCheck.length) verifiedReviewerDeptId = b.reviewDepartmentId;
     }
 
-    let status = assessmentInitialStatus(
-      String(b.type),
-      verifiedReviewerDeptId ? 'department-head' : createdByRole
-    );
+    let status = b.saveDraft
+      ? 'Draft'
+      : assessmentInitialStatus(
+          String(b.type),
+          verifiedReviewerDeptId ? 'department-head' : createdByRole
+        );
     const id = `asm-${Date.now()}`;
 
     // Reviewer gate: a department head's (or a designated reviewer's) Mid/Final Exam
@@ -1161,7 +1163,14 @@ apiRouter.post(
         reviewDepartmentId,
       ]
     );
-    if (status === 'Pending Reviewer') {
+    if (status === 'Draft') {
+      await insertNotification(
+        'Assessment draft saved',
+        `"${b.title}" is saved privately and is not visible to the department head until submitted.`,
+        'info',
+        '/dashboard/teacher/assessments'
+      );
+    } else if (status === 'Pending Reviewer') {
       await insertNotification(
         'Exam ready for review',
         `"${b.title}" (${b.type}) needs your review before it's shared with the rest of the department.`,
@@ -2122,7 +2131,9 @@ apiRouter.post(
     const questionResultsJson =
       b.questionResults != null ? JSON.stringify(b.questionResults) : null;
 
-    if (b.studentId && b.subject && b.gradeLevel && b.section && b.term) {
+    // Adding a new result remains allowed after report submission. The report lock
+    // applies only when an existing result is being edited (an id is supplied).
+    if (b.id && b.studentId && b.subject && b.gradeLevel && b.section && b.term) {
       const locked = await isSubjectTermLocked({
         studentId: b.studentId,
         subject: b.subject,

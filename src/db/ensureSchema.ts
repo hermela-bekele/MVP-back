@@ -59,3 +59,29 @@ export async function ensureAcademicResultsSchema() {
   const sql = fs.readFileSync(path.join(__dirname, 'schema_academics.sql'), 'utf-8');
   await pool.query(sql);
 }
+
+/**
+ * Idempotent assessment workflow columns for databases created before reviewer
+ * gating and draft saving were introduced.
+ */
+export async function ensureAssessmentSchema() {
+  const statements = [
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS covered_teaching_note_ids JSONB NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS moderation_rubric JSONB`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS review_department_id TEXT REFERENCES departments(id) ON DELETE SET NULL`,
+    `ALTER TABLE assessments ADD COLUMN IF NOT EXISTS created_by_role TEXT NOT NULL DEFAULT 'teacher'`,
+    `CREATE TABLE IF NOT EXISTS assessment_reviewers (
+      id TEXT PRIMARY KEY,
+      department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+      teacher_id TEXT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      granted_by TEXT REFERENCES portal_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (department_id, teacher_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_teacher ON assessment_reviewers(teacher_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_assessment_reviewers_department ON assessment_reviewers(department_id)`,
+  ];
+  for (const sql of statements) {
+    await pool.query(sql);
+  }
+}
