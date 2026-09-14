@@ -525,9 +525,8 @@ CREATE TABLE IF NOT EXISTS school_integrations (
 ALTER TABLE school_settings ADD COLUMN IF NOT EXISTS report_card_template JSONB NOT NULL DEFAULT '{}';
 
 -- MOE Documents: national policy/curriculum/compliance documents MOE uploads and
--- manages. `audience` is categorization only (All/Regional/Woredas/Schools) — there
--- is no automatic distribution/visibility logic tied to it (see MOE requirements
--- §11), so this stays a MOE-portal-managed catalog for now, not a subscriber feed.
+-- manages. Documents with audience All or Schools are visible in every school's
+-- Resource Library to school head, head of academics, department heads, and teachers.
 CREATE TABLE IF NOT EXISTS moe_documents (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -731,4 +730,14 @@ ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO role_permissions (role, permission_code, school_id)
 SELECT 'school-head', 'staffing.request', id FROM schools
+ON CONFLICT DO NOTHING;
+
+-- Resource Library: HOA / HOD need documents.view to read MOE documents and school
+-- external resources. Backfill for schools whose role_permissions were seeded earlier.
+INSERT INTO role_permissions (role, permission_code, school_id)
+SELECT 'head-of-academics', 'documents.view', id FROM schools
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role, permission_code, school_id)
+SELECT 'department-head', 'documents.view', id FROM schools
 ON CONFLICT DO NOTHING;

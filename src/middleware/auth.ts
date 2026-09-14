@@ -123,6 +123,29 @@ export function requirePermission(...codes: string[]) {
   };
 }
 
+/** Succeeds when the caller has at least one of the listed permissions. */
+export function requireAnyPermission(...codes: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const run = async () => {
+      const user = req.user ?? (await resolveUserFromHeader(req));
+      if (!user) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      req.user = user;
+      for (const code of codes) {
+        const ok = await userHasPermission(user.id, user.role, user.schoolId, code);
+        if (ok) {
+          next();
+          return;
+        }
+      }
+      res.status(403).json({ error: `Missing permission: one of ${codes.join(', ')}` });
+    };
+    run().catch(next);
+  };
+}
+
 /** Force schoolId query/body to the caller's school (moe may pass schoolId). */
 export function enforceSchoolScope(req: Request, res: Response, next: NextFunction) {
   const user = req.user;

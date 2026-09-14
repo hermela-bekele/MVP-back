@@ -57,7 +57,7 @@ import { budgetRouter } from './budget.js';
 import { expensesRouter } from './expenses.js';
 import { payablesRouter } from './payables.js';
 import { academicResultsRouter, isSubjectTermLocked } from './academicResults.js';
-import { attachPermissions, optionalAuth, requireAuth, requirePermission, enforceSchoolScope } from '../middleware/auth.js';
+import { attachPermissions, optionalAuth, requireAuth, requirePermission, requireAnyPermission, enforceSchoolScope } from '../middleware/auth.js';
 import { signAccessToken } from '../lib/tokens.js';
 import { writeAudit } from '../lib/audit.js';
 import { rateLimit } from '../lib/rateLimit.js';
@@ -2414,6 +2414,97 @@ apiRouter.patch(
   })
 );
 
+apiRouter.patch(
+  '/training-materials/:id',
+  requireAuth,
+  requirePermission('training.manage'),
+  asyncHandler(async (req, res) => {
+    const { rows: existing } = await query('SELECT * FROM training_materials WHERE id = $1', [req.params.id]);
+    if (!existing.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+
+    await query(
+      `ALTER TABLE IF EXISTS training_materials ADD COLUMN IF NOT EXISTS training_plan_id TEXT;`,
+    );
+    await query(
+      `ALTER TABLE IF EXISTS training_materials ADD COLUMN IF NOT EXISTS code TEXT;`,
+    );
+
+    const cur = existing[0];
+    const body = req.body ?? {};
+    const title = typeof body.title === 'string' ? body.title.trim() : cur.title;
+    if (!title) {
+      res.status(400).json({ error: 'title is required' });
+      return;
+    }
+    const description =
+      body.description === undefined
+        ? cur.description
+        : typeof body.description === 'string' && body.description.trim()
+          ? body.description.trim()
+          : null;
+    const resourceUrl =
+      typeof body.resourceUrl === 'string' && body.resourceUrl.trim()
+        ? body.resourceUrl.trim()
+        : cur.resource_url;
+    const category =
+      typeof body.category === 'string' && body.category.trim()
+        ? body.category.trim()
+        : cur.category;
+    const audience =
+      typeof body.audience === 'string' && body.audience.trim()
+        ? body.audience.trim()
+        : cur.audience || 'All';
+    const code =
+      body.code === undefined
+        ? cur.code
+        : typeof body.code === 'string' && body.code.trim()
+          ? body.code.trim()
+          : null;
+    const trainingPlanId =
+      body.trainingPlanId === undefined
+        ? cur.training_plan_id
+        : typeof body.trainingPlanId === 'string' && body.trainingPlanId.trim()
+          ? body.trainingPlanId.trim()
+          : null;
+
+    await query(
+      `UPDATE training_materials
+       SET title = $1,
+           description = $2,
+           resource_url = $3,
+           category = $4,
+           audience = $5,
+           code = $6,
+           training_plan_id = $7
+       WHERE id = $8`,
+      [title, description, resourceUrl, category, audience, code, trainingPlanId, req.params.id],
+    );
+
+    const { rows } = await query('SELECT * FROM training_materials WHERE id = $1', [req.params.id]);
+    res.json(mapTrainingMaterial(rows[0]));
+  })
+);
+
+apiRouter.delete(
+  '/training-materials/:id',
+  requireAuth,
+  requirePermission('training.manage'),
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      'DELETE FROM training_materials WHERE id = $1 RETURNING id, title',
+      [req.params.id],
+    );
+    if (!rows.length) {
+      res.status(404).json({ error: 'Resource not found' });
+      return;
+    }
+    res.json({ ok: true });
+  })
+);
+
 const CHECK_IN_CONFIDENTIALITY = ['identified', 'restricted', 'anonymous'] as const;
 
 apiRouter.post(
@@ -3465,7 +3556,7 @@ apiRouter.patch(
 apiRouter.get(
   '/school-resources',
   requireAuth,
-  requirePermission('resources.manage'),
+  requireAnyPermission('resources.manage', 'documents.view'),
   enforceSchoolScope,
   asyncHandler(async (req, res) => {
     const schoolId = (req.query.schoolId as string | undefined) ?? req.user!.schoolId;
@@ -3744,23 +3835,37 @@ apiRouter.post(
   enforceSchoolScope,
   asyncHandler(async (req, res) => {
     const body = req.body as { schoolId?: string; subject?: string; body?: string };
+    const isMoe = req.user!.role === 'moe';
     const schoolId = body.schoolId ?? req.user!.schoolId;
-    if (!schoolId || !body.subject || !body.body) {
+    if (!schoolId || !body.subject?.trim() || !body.body?.trim()) {
       res.status(400).json({ error: 'schoolId, subject, and body are required' });
       return;
     }
+    if (isMoe && !body.schoolId) {
+      res.status(400).json({ error: 'schoolId is required when MOE initiates a thread' });
+      return;
+    }
+
+    const { rows: schoolRows } = await query('SELECT id FROM schools WHERE id = $1', [schoolId]);
+    if (!schoolRows.length) {
+      res.status(404).json({ error: 'School not found' });
+      return;
+    }
+
     const id = newId('mthr');
     const reference = referenceCode('MOE');
+    const senderRole = isMoe ? 'moe' : 'school-head';
+    const initialStatus = isMoe ? 'awaiting_school' : 'awaiting_moe';
     await query(
-      `INSERT INTO moe_message_threads (id, reference_number, school_id, subject, created_by, created_by_name)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [id, reference, schoolId, body.subject, req.user!.id, req.user!.displayName]
+      `INSERT INTO moe_message_threads (id, reference_number, school_id, subject, status, created_by, created_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, reference, schoolId, body.subject.trim(), initialStatus, req.user!.id, req.user!.displayName]
     );
     const msgId = newId('mmsg');
     await query(
       `INSERT INTO moe_thread_messages (id, thread_id, sender_user_id, sender_role, sender_name, body)
-       VALUES ($1,$2,$3,'school-head',$4,$5)`,
-      [msgId, id, req.user!.id, req.user!.displayName, body.body]
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [msgId, id, req.user!.id, senderRole, req.user!.displayName, body.body.trim()]
     );
     const { rows } = await query('SELECT * FROM moe_message_threads WHERE id = $1', [id]);
     await writeAudit({
@@ -3769,7 +3874,7 @@ apiRouter.post(
       action: 'moe_message_thread.created',
       entityType: 'moe_message_thread',
       entityId: id,
-      metadata: { subject: body.subject, referenceNumber: reference },
+      metadata: { subject: body.subject.trim(), referenceNumber: reference, initiatedBy: senderRole },
     });
     res.status(201).json(mapMoeMessageThread(rows[0]));
   })
