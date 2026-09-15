@@ -731,4 +731,4 @@ ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO role_permissions (role, permission_code, school_id)
 SELECT 'school-head', 'staffing.request', id FROM schools
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role, permission_code, school_id) DO NOTHING;
