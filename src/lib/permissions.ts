@@ -205,7 +205,15 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'reports.view',
     'training.manage',
   ],
-  'department-head': ['grades.publish', 'materials.manage', 'reports.view', 'hr.view_employees', 'training.manage', 'surveys.manage'],
+  'department-head': [
+    'grades.publish',
+    'materials.manage',
+    'reports.view',
+    'hr.view_employees',
+    'training.manage',
+    'surveys.manage',
+    'documents.view',
+  ],
   'head-of-academics': [
     'materials.manage',
     'calendar.manage',
@@ -215,6 +223,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionCode[]> = {
     'hr.view_employees',
     'training.manage',
     'grades.finalize',
+    'documents.view',
   ],
 };
 
