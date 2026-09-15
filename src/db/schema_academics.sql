@@ -196,11 +196,11 @@ ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO role_permissions (role, permission_code, school_id)
 SELECT 'head-of-academics', 'grades.finalize', id FROM schools
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role, permission_code, school_id) DO NOTHING;
 
 INSERT INTO role_permissions (role, permission_code, school_id)
 SELECT 'school-head', 'grades.finalize', id FROM schools
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role, permission_code, school_id) DO NOTHING;
 
 -- Teacher requests to unlock submitted/finalized subject-term results for editing.
 -- Academic Head approve/reject; emergency reopen creates a row with source = academic_head_direct.
